@@ -39,6 +39,7 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
+          set +e
           # У раннеров общий IP и Telegram иногда отвечает 429 — не валим job,
           # поллинг сам умеет ждать retry_after.
           for attempt in 1 2 3 4 5; do
@@ -51,6 +52,7 @@ jobs:
             sleep 15
           done
           echo "getMe не ответил — запускаю поллинг, он сам повторит"
+          exit 0
 
       - name: Run bot
         env:
