@@ -6,6 +6,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.handlers import (
@@ -48,6 +49,25 @@ ROUTERS = (
 )
 
 
+async def wait_for_telegram(bot: Bot, attempts: int = 12, delay: float = 15.0):
+    """Дождаться Bot API: на общих IP Telegram отвечает flood control."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return await bot.me()
+        except TelegramRetryAfter as error:
+            pause = max(float(error.retry_after), 5.0)
+            logger.warning(
+                "Telegram flood control, повтор через %.0f с (%s/%s)", pause, attempt, attempts
+            )
+            await asyncio.sleep(pause)
+        except TelegramNetworkError as error:
+            logger.warning("Bot API недоступен (%s), повтор через %.0f с (%s/%s)",
+                           error, delay, attempt, attempts)
+            await asyncio.sleep(delay)
+
+    raise RuntimeError("Telegram Bot API не ответил за отведённое время")
+
+
 def create_dispatcher(config: BotConfig) -> Dispatcher:
     """Собрать диспетчер с роутерами (используется и в тестах)."""
     dispatcher = Dispatcher(storage=MemoryStorage())
@@ -75,7 +95,8 @@ async def main() -> None:
     dispatcher.message.middleware(DbMiddleware(repos, config))
     dispatcher.callback_query.middleware(DbMiddleware(repos, config))
 
-    logger.info("Бот запущен")
+    me = await wait_for_telegram(bot)
+    logger.info("Бот запущен: @%s", me.username)
     try:
         await dispatcher.start_polling(bot)
     finally:
