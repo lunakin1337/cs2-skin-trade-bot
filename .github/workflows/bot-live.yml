@@ -39,7 +39,18 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
-          curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getMe" |             python -c "import json,sys; d=json.load(sys.stdin); print('bot:', d['result']['username']) if d.get('ok') else sys.exit('токен не принят: %s' % d.get('description'))"
+          # У раннеров общий IP и Telegram иногда отвечает 429 — не валим job,
+          # поллинг сам умеет ждать retry_after.
+          for attempt in 1 2 3 4 5; do
+            response=$(curl -s --max-time 20 "https://api.telegram.org/bot${BOT_TOKEN}/getMe")
+            if echo "$response" | grep -q '"ok":true'; then
+              echo "$response" | python -c "import json,sys; d=json.load(sys.stdin); print('bot:', d['result']['username'])"
+              exit 0
+            fi
+            echo "попытка ${attempt}: $(echo "$response" | head -c 160)"
+            sleep 15
+          done
+          echo "getMe не ответил — запускаю поллинг, он сам повторит"
 
       - name: Run bot
         env:
