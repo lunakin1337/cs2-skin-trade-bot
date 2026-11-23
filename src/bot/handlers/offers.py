@@ -1,72 +1,40 @@
-"""Хендеры публичных предложений обмена."""
+"""Публичные предложения обмена."""
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message
 
+from bot.keyboards.inline import back_to_main_keyboard, offers_keyboard
+from bot.utils.formatters import format_offer
+from bot.utils.telegram import edit_or_send, notify
 from database.repository import Repositories
-from bot.keyboards.inline import back_to_main_keyboard
 
 router = Router()
+
+EMPTY_TEXT = (
+    "📋 <b>Предложений обмена нет</b>\n\n"
+    "Создайте своё первое предложение через /create_offer."
+)
+
+
+async def _offers_view(repos: Repositories):
+    offers = await repos.offers.get_active(limit=10)
+    if not offers:
+        return EMPTY_TEXT, back_to_main_keyboard()
+
+    lines = ["📋 <b>Публичные предложения</b>", ""]
+    lines.extend(format_offer(offer) + "\n" for offer in offers)
+    return "\n".join(lines).rstrip(), offers_keyboard(offers)
 
 
 @router.message(Command("offers"))
 async def cmd_offers(message: Message, repos: Repositories) -> None:
-    offers = await repos.offers.get_active(limit=10)
-
-    if not offers:
-        await message.answer(
-            "📋 <b>Предложений обмена нет</b>\n\n"
-            "Создайте своё первое предложение через /create_offer",
-            reply_markup=back_to_main_keyboard(),
-        )
-        return
-
-    text = "📋 <b>Публичные предложения обмена</b>\n\n"
-    for offer in offers:
-        text += (
-            f"• <b>{offer['title']}</b>\n"
-            f"  Продавец: @{offer.get('username') or '-'}\n"
-            f"  Рейтинг: {offer.get('rating', 0):.1f} ⭐\n"
-            f"  Цена: ${offer.get('price', 0):.2f}\n"
-            f"  ID: #{offer['id']}\n\n"
-        )
-
-    await message.answer(text, reply_markup=back_to_main_keyboard())
+    text, markup = await _offers_view(repos)
+    await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "offers")
 async def cb_offers(callback: CallbackQuery, repos: Repositories) -> None:
-    offers = await repos.offers.get_active(limit=10)
-
-    if not offers:
-        await callback.message.edit_text(
-            "📋 <b>Предложений обмена нет</b>\n\n"
-            "Создайте своё первое предложение через /create_offer",
-            reply_markup=back_to_main_keyboard(),
-        )
-        await callback.answer()
-        return
-
-    text = "📋 <b>Публичные предложения обмена</b>\n\n"
-    for offer in offers:
-        text += (
-            f"• <b>{offer['title']}</b>\n"
-            f"  Продавец: @{offer.get('username') or '-'}\n"
-            f"  Рейтинг: {offer.get('rating', 0):.1f} ⭐\n"
-            f"  Цена: ${offer.get('price', 0):.2f}\n"
-            f"  ID: #{offer['id']}\n\n"
-        )
-
-    await callback.message.edit_text(text, reply_markup=back_to_main_keyboard())
-    await callback.answer()
-
-
-@router.message(Command("create_offer"))
-async def cmd_create_offer(message: Message) -> None:
-    await message.answer(
-        "📝 <b>Создание предложения обмена</b>\n\n"
-        "Функция в разработке (Срез 7).\n"
-        "Скоро вы сможете создавать публичные предложения обмена скинами.",
-        reply_markup=back_to_main_keyboard(),
-    )
+    text, markup = await _offers_view(repos)
+    await edit_or_send(callback.message, text, markup)
+    await notify(callback)

@@ -1,145 +1,177 @@
-"""Хендеры профиля и привязки Steam."""
+"""Профиль пользователя и привязка Steam."""
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+import logging
+
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
+from bot.keyboards.inline import back_to_main_keyboard, profile_keyboard
 from bot.states.trade import ProfileStates
-from database.repository import Repositories
-from bot.keyboards.inline import back_to_main_keyboard
+from bot.utils.formatters import format_user_profile
+from bot.utils.steam import (
+    SteamClient,
+    SteamError,
+    SteamProfile,
+    get_steam_client,
+    parse_trade_url,
+)
+from bot.utils.telegram import edit_or_send, notify
 from bot.utils.validators import validate_steam_id64, validate_trade_url
+from config.settings import BotConfig
+from bot.utils.users import ensure_user
+from database.repository import Repositories
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
+STEAM_ID_PROMPT = (
+    "🔗 <b>Привязка Steam</b>\n\n"
+    "Шаг 1/2: отправьте SteamID64 — 17 цифр, например <code>76561198000000000</code>.\n\n"
+    "Найти свой ID можно на steamid.io или в ссылке на профиль."
+)
+
+TRADE_URL_PROMPT = (
+    "🔗 Шаг 2/2: отправьте Steam Trade URL.\n\n"
+    "Он выглядит так:\n"
+    "<code>https://steamcommunity.com/tradeoffer/new/?partner=123456&token=ABCDEF</code>\n\n"
+    "Где взять: Инвентарь → «Обмен» → «Кто может отправлять мне предложения обмена» → "
+    "«Публичная ссылка на обмен»."
+)
+
+
+async def fetch_steam_profile(config: BotConfig, steam_id: str) -> tuple[SteamProfile | None, str | None]:
+    """Публичный профиль Steam: (профиль, причина отсутствия)."""
+    if not config.has_steam_api_key:
+        return None, "STEAM_API_KEY не задан — имя и аватар Steam недоступны"
+
+    client: SteamClient = get_steam_client(config.steam_api_key)
+    try:
+        profile = await client.fetch_profile(steam_id)
+    except SteamError as error:
+        logger.warning("Не удалось получить профиль Steam %s: %s", steam_id, error)
+        return None, str(error)
+
+    if profile is None:
+        return None, "Профиль Steam не найден"
+    return profile, None
+
 
 @router.message(Command("profile"))
-async def cmd_profile(message: Message, repos: Repositories) -> None:
-    user = await repos.users.get_by_telegram_id(message.from_user.id)
-    if not user:
-        await repos.users.create_or_update(
-            telegram_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            last_name=message.from_user.last_name,
-        )
-        user = await repos.users.get_by_telegram_id(message.from_user.id)
+async def cmd_profile(message: Message, repos: Repositories, config: BotConfig) -> None:
+    user = await ensure_user(repos, message.from_user)
+    text = format_user_profile(user)
+    markup = profile_keyboard(user)
 
-    steam_status = "✅ Привязан" if user.get("is_steam_linked") else "❌ Не привязан"
-    ban_status = "🔴 Забанен" if user.get("is_banned") else "🟢 Активен"
-
-    await message.answer(
-        "👤 <b>Профиль</b>\n\n"
-        f"ID: <code>{user['telegram_id']}</code>\n"
-        f"Имя: {user.get('first_name') or '-'} {user.get('last_name') or '-'}\n"
-        f"Username: @{user.get('username') or '-'}\n"
-        f"Steam: {steam_status}\n"
-        f"Статус: {ban_status}\n"
-        f"Рейтинг: {user.get('rating', 0):.1f} ⭐\n"
-        f"Сделок: {user.get('trades_count', 0)}\n\n"
-        f"Steam ID: {user.get('steam_id', '-')}\n"
-        f"Trade URL: {user.get('steam_trade_url', '-')}",
-        reply_markup=back_to_main_keyboard(),
-    )
+    if user.get("steam_avatar_url"):
+        await message.answer_photo(user["steam_avatar_url"], caption=text, reply_markup=markup)
+    else:
+        await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "profile")
-async def cb_profile(callback: CallbackQuery, repos: Repositories) -> None:
-    user = await repos.users.get_by_telegram_id(callback.from_user.id)
-    if not user:
-        await repos.users.create_or_update(
-            telegram_id=callback.from_user.id,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name,
-        )
-        user = await repos.users.get_by_telegram_id(callback.from_user.id)
+async def cb_profile(callback: CallbackQuery, repos: Repositories, config: BotConfig) -> None:
+    user = await ensure_user(repos, callback.from_user)
+    await edit_or_send(callback.message, format_user_profile(user), profile_keyboard(user))
+    await notify(callback)
 
-    steam_status = "✅ Привязан" if user.get("is_steam_linked") else "❌ Не привязан"
-    ban_status = "🔴 Забанен" if user.get("is_banned") else "🟢 Активен"
 
-    await callback.message.edit_text(
-        "👤 <b>Профиль</b>\n\n"
-        f"ID: <code>{user['telegram_id']}</code>\n"
-        f"Имя: {user.get('first_name') or '-'} {user.get('last_name') or '-'}\n"
-        f"Username: @{user.get('username') or '-'}\n"
-        f"Steam: {steam_status}\n"
-        f"Статус: {ban_status}\n"
-        f"Рейтинг: {user.get('rating', 0):.1f} ⭐\n"
-        f"Сделок: {user.get('trades_count', 0)}\n\n"
-        f"Steam ID: {user.get('steam_id', '-')}\n"
-        f"Trade URL: {user.get('steam_trade_url', '-')}",
-        reply_markup=back_to_main_keyboard(),
+@router.callback_query(F.data == "steam_refresh")
+async def cb_steam_refresh(callback: CallbackQuery, repos: Repositories, config: BotConfig) -> None:
+    user = await ensure_user(repos, callback.from_user)
+    if not user.get("is_steam_linked") or not user.get("steam_id"):
+        await notify(callback, "Steam ещё не привязан", alert=True)
+        return
+
+    profile, error = await fetch_steam_profile(config, user["steam_id"])
+    if profile is None:
+        await notify(callback, error or "Не удалось обновить профиль", alert=True)
+        return
+
+    await repos.users.set_steam_profile(
+        user["id"],
+        persona_name=profile.persona_name,
+        avatar_url=profile.avatar_url,
+        profile_url=profile.profile_url,
     )
-    await callback.answer()
+    user = await repos.users.get_by_id(user["id"])
+    await edit_or_send(callback.message, format_user_profile(user), profile_keyboard(user))
+    await notify(callback, "Профиль Steam обновлён")
 
 
 @router.callback_query(F.data == "link_steam")
 async def cb_link_steam(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ProfileStates.waiting_steam_id)
-    await callback.message.edit_text(
-        "🔗 <b>Привязка Steam аккаунта</b>\n\n"
-        "Введите ваш SteamID64 (17-значный номер, например: 76561198000000000)\n\n"
-        "Узнать свой SteamID64 можно на сайте steamid.io",
-        reply_markup=back_to_main_keyboard(),
-    )
-    await callback.answer()
+    await edit_or_send(callback.message, STEAM_ID_PROMPT, back_to_main_keyboard())
+    await notify(callback)
 
 
 @router.message(ProfileStates.waiting_steam_id)
-async def process_steam_id(message: Message, state: FSMContext, repos: Repositories) -> None:
-    steam_id = message.text.strip()
-
+async def process_steam_id(message: Message, state: FSMContext, config: BotConfig) -> None:
+    steam_id = (message.text or "").strip()
     is_valid, error = validate_steam_id64(steam_id)
     if not is_valid:
-        await message.answer(
-            f"❌ {error}\nПопробуйте снова или нажмите «Назад в меню».",
-            reply_markup=back_to_main_keyboard(),
-        )
+        await message.answer(f"❌ {error}\nПопробуйте снова.", reply_markup=back_to_main_keyboard())
         return
 
-    await state.update_data(steam_id=steam_id)
-    await state.set_state(ProfileStates.waiting_trade_url)
-    await message.answer(
-        "🔗 Теперь введите ваш Steam Trade URL\n\n"
-        "Пример: https://steamcommunity.com/tradeoffer/new/?partner=123456&token=ABCDEF\n\n"
-        "Как получить: Профиль → Инвентарь → Предложения обмене → «Кто может отправить мне предложения обмене?» → «Третьи лица» → скопируйте ссылку",
-        reply_markup=back_to_main_keyboard(),
+    profile, profile_error = await fetch_steam_profile(config, steam_id)
+    await state.update_data(
+        steam_id=steam_id,
+        persona_name=profile.persona_name if profile else None,
+        avatar_url=profile.avatar_url if profile else None,
+        profile_url=profile.profile_url if profile else None,
     )
+    await state.set_state(ProfileStates.waiting_trade_url)
+
+    note = ""
+    if profile:
+        note = f"✅ Найден аккаунт: <b>{profile.persona_name}</b>\n\n"
+    elif profile_error:
+        note = f"⚠️ {profile_error}\n\n"
+
+    await message.answer(note + TRADE_URL_PROMPT, reply_markup=back_to_main_keyboard())
 
 
 @router.message(ProfileStates.waiting_trade_url)
 async def process_trade_url(message: Message, state: FSMContext, repos: Repositories) -> None:
-    trade_url = message.text.strip()
-
+    trade_url = (message.text or "").strip()
     is_valid, error = validate_trade_url(trade_url)
     if not is_valid:
+        await message.answer(f"❌ {error}\nПопробуйте снова.", reply_markup=back_to_main_keyboard())
+        return
+
+    parsed = parse_trade_url(trade_url)
+    data = await state.get_data()
+    steam_id = data.get("steam_id")
+
+    if not steam_id or not parsed:
+        await state.clear()
         await message.answer(
-            f"❌ {error}\nПопробуйте снова.",
+            "❌ Сессия привязки истекла, начните заново из профиля.",
             reply_markup=back_to_main_keyboard(),
         )
         return
 
-    data = await state.get_data()
-    steam_id = data.get("steam_id")
-
-    user = await repos.users.get_by_telegram_id(message.from_user.id)
-    if not user:
-        await repos.users.create_or_update(
-            telegram_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            last_name=message.from_user.last_name,
-        )
-        user = await repos.users.get_by_telegram_id(message.from_user.id)
-
-    await repos.users.link_steam(user["id"], steam_id, trade_url)
+    user = await ensure_user(repos, message.from_user)
+    await repos.users.link_steam(
+        user["id"],
+        steam_id,
+        parsed.url,
+        trade_partner=parsed.partner,
+        trade_token=parsed.token,
+        persona_name=data.get("persona_name"),
+        avatar_url=data.get("avatar_url"),
+        profile_url=data.get("profile_url"),
+    )
     await state.clear()
 
+    user = await repos.users.get_by_id(user["id"])
     await message.answer(
-        "✅ Steam аккаунт успешно привязан!\n\n"
-        f"Steam ID: <code>{steam_id}</code>\n"
-        f"Trade URL: {trade_url}\n\n"
-        "Теперь вы можете просматривать инвентарь и создавать предложения обмене.",
-        reply_markup=back_to_main_keyboard(),
+        "✅ Steam привязан!\n\n"
+        f"SteamID64: <code>{steam_id}</code>\n"
+        f"Trade URL: {parsed.masked}\n\n"
+        "Осталось синхронизировать инвентарь — нажмите «🔄 Синхронизировать» в разделе инвентаря.",
+        reply_markup=profile_keyboard(user),
     )

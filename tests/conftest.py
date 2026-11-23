@@ -1,66 +1,83 @@
-"""Pytest конфигурация и фикстуры."""
+"""Pytest фикстуры: временная база с применёнными миграциями."""
+
+import os
+import tempfile
 
 import pytest
-import asyncio
-import aiosqlite
-import tempfile
-import os
-from pathlib import Path
 
-from database import Database
-from database.models import SCHEMA
-from database.repository import Repositories
+from aiogram import Bot
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
 
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Создает event loop для всей сессии тестов."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+from config.settings import BotConfig
+from database import Repositories, init_database
+from tests.helpers import RecordingSession
 
 
 @pytest.fixture
 async def db():
-    """Создает временную БД для тестов."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = f.name
+    """Временная БД, схема поднимается миграциями — как в проде."""
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as handle:
+        db_path = handle.name
 
-    db = Database(db_path=db_path)
-    await db.connect()
-    await db.init_schema(SCHEMA)
-
-    yield db
-
-    await db.close()
-    os.unlink(db_path)
+    database = await init_database(db_path)
+    try:
+        yield database
+    finally:
+        await database.close()
+        os.unlink(db_path)
 
 
 @pytest.fixture
 async def repos(db):
-    """Создает репозитории с тестовой БД."""
     return Repositories(db)
 
 
 @pytest.fixture
 async def test_user(repos):
-    """Создает тестового пользователя."""
-    user = await repos.users.create_or_update(
+    return await repos.users.create_or_update(
         telegram_id=123456789,
         username="testuser",
         first_name="Test",
         last_name="User",
     )
-    return user
 
 
 @pytest.fixture
 async def test_user2(repos):
-    """Создает второго тестового пользователя."""
-    user = await repos.users.create_or_update(
+    return await repos.users.create_or_update(
         telegram_id=987654321,
         username="testuser2",
         first_name="Test2",
         last_name="User2",
     )
-    return user
+
+
+@pytest.fixture
+def config():
+    return BotConfig(
+        token="test_token",
+        admin_ids=[8851272459],
+        db_path="test.db",
+        steam_api_key="",
+    )
+
+
+@pytest.fixture
+def session():
+    return RecordingSession()
+
+
+@pytest.fixture
+def bot(session):
+    instance = Bot(token="1234567890:AAHbbQ61o1k8P2uGpwVxpXLL5LDUe03x0Q")
+    instance.session = session
+    return instance
+
+
+@pytest.fixture
+async def state():
+    storage = MemoryStorage()
+    context = FSMContext(storage=storage, key=(123456789, 123456789))
+    yield context
+    await storage.close()

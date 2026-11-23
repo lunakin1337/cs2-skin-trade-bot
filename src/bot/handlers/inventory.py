@@ -1,143 +1,170 @@
-"""Хендеры инвентаря скинов."""
+"""Инвентарь: загрузка из Steam и отображение скинов."""
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+import logging
+import math
+
+from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 
+from bot.keyboards.inline import inventory_keyboard
+from bot.services.inventory_sync import sync_inventory
+from bot.utils.formatters import (
+    format_item,
+    format_item_photo_caption,
+    format_price,
+    item_image_url,
+)
+from bot.utils.telegram import edit_or_send, notify
+from bot.utils.users import ensure_user
+from config.settings import BotConfig
 from database.repository import Repositories
-from bot.keyboards.inline import back_to_main_keyboard, inventory_keyboard
-from bot.utils.steam import get_steam_api, SteamAPIError
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
+PAGE_SIZE = 8
+PHOTO_LIMIT = 10
+
+
+def format_sync_report(report: dict) -> str:
+    """Текст отчёта о синхронизации инвентаря."""
+    if not report.get("ok"):
+        hint = report.get("hint") or report.get("error") or "Неизвестная ошибка"
+        return f"❌ Не удалось загрузить инвентарь.\n\n{hint}"
+
+    return "\n".join(
+        [
+            "✅ <b>Инвентарь синхронизирован</b>",
+            "",
+            f"Найдено в Steam: {report['found']}",
+            f"Добавлено: {report['created']} · обновлено: {report['updated']} · "
+            f"удалено: {report['removed']}",
+            f"Цены получены для {report['priced']} позиций",
+        ]
+    )
+
+
+async def _inventory_view(
+    user: dict,
+    repos: Repositories,
+    page: int = 0,
+) -> tuple[str, object]:
+    total = await repos.items.count_by_owner(user["id"])
+    has_steam = bool(user.get("is_steam_linked"))
+
+    if total == 0:
+        text = "\n".join(
+            [
+                "🎒 <b>Инвентарь пуст</b>",
+                "",
+                "Скинов в базе пока нет.",
+                (
+                    "Нажмите «🔄 Синхронизировать», чтобы подтянуть инвентарь CS2 из Steam."
+                    if has_steam
+                    else "Сначала привяжите Steam-аккаунт в профиле."
+                ),
+            ]
+        )
+        return text, inventory_keyboard(has_steam)
+
+    pages = max(1, math.ceil(total / PAGE_SIZE))
+    page = min(max(page, 0), pages - 1)
+    items = await repos.items.get_by_owner(user["id"], limit=PAGE_SIZE, offset=page * PAGE_SIZE)
+    estimated = await repos.items.sum_price(user["id"])
+
+    lines = [f"🎒 <b>Инвентарь</b> — {total} шт."]
+    if estimated:
+        lines.append(f"💰 Оценка известных цен: {format_price(estimated)}")
+    if user.get("inventory_synced_at"):
+        lines.append(f"🔄 Обновлён: {user['inventory_synced_at']} UTC")
+    lines.append("")
+
+    for item in items:
+        lines.append(format_item(item))
+
+    return "\n".join(lines), inventory_keyboard(has_steam, page=page, pages=pages)
+
+
+async def _show_inventory(
+    message: Message,
+    repos: Repositories,
+    from_user,
+    page: int = 0,
+    edit: bool = False,
+) -> None:
+    user = await ensure_user(repos, from_user)
+    text, markup = await _inventory_view(user, repos, page)
+    if edit:
+        await edit_or_send(message, text, markup)
+    else:
+        await message.answer(text, reply_markup=markup)
+
 
 @router.message(Command("inventory"))
-async def cmd_inventory(message: Message, repos: Repositories) -> None:
-    await _show_inventory(message, repos, is_callback=False)
+async def cmd_inventory(message: Message, repos: Repositories, config: BotConfig) -> None:
+    await _show_inventory(message, repos, message.from_user)
 
 
 @router.callback_query(F.data == "inventory")
-async def cb_inventory(callback: CallbackQuery, repos: Repositories) -> None:
-    await _show_inventory(callback, repos, is_callback=True)
+async def cb_inventory(callback: CallbackQuery, repos: Repositories, config: BotConfig) -> None:
+    await _show_inventory(callback.message, repos, callback.from_user, edit=True)
+    await notify(callback)
 
 
-async def _show_inventory(event: Message | CallbackQuery, repos: Repositories, is_callback: bool) -> None:
-    user = await repos.users.get_by_telegram_id(event.from_user.id)
-    if not user:
-        if is_callback:
-            await event.answer("Пользователь не найден")
+@router.callback_query(F.data.startswith("inv_page_"))
+async def cb_inventory_page(callback: CallbackQuery, repos: Repositories, config: BotConfig) -> None:
+    try:
+        page = int(callback.data.rsplit("_", 1)[-1])
+    except ValueError:
+        page = 0
+    await _show_inventory(callback.message, repos, callback.from_user, page=page, edit=True)
+    await notify(callback)
+
+
+@router.callback_query(F.data == "inv_noop")
+async def cb_inventory_noop(callback: CallbackQuery) -> None:
+    await notify(callback)
+
+
+@router.callback_query(F.data == "inv_photos")
+async def cb_inventory_photos(callback: CallbackQuery, repos: Repositories, config: BotConfig) -> None:
+    user = await ensure_user(repos, callback.from_user)
+    items = await repos.items.get_by_owner(user["id"], limit=PHOTO_LIMIT * 2)
+
+    media = [
+        InputMediaPhoto(media=url, caption=format_item_photo_caption(item))
+        for item in items
+        if (url := item_image_url(item))
+    ][:PHOTO_LIMIT]
+
+    if not media:
+        await notify(callback, "У предметов нет картинок. Сначала синхронизируйте инвентарь.", alert=True)
         return
 
-    items = await repos.items.get_by_owner(user["id"], tradable_only=True)
-    has_steam = user.get("is_steam_linked", False)
-
-    if not items:
-        text = (
-            "🎒 <b>Инвентарь пуст</b>\n\n"
-            "У вас нет торгуемых скинов."
-        )
-        if has_steam:
-            text += "\nНажмите «Синхронизировать с Steam» для загрузки инвентаря."
-        else:
-            text += "\nСначала привяжите Steam в профиле."
-        
-        if is_callback:
-            await event.message.edit_text(text, reply_markup=inventory_keyboard(has_steam))
-            await event.answer()
-        else:
-            await event.answer(text, reply_markup=inventory_keyboard(has_steam))
-        return
-
-    text = "🎒 <b>Ваш инвентарь</b>\n\n"
-    for item in items[:10]:
-        text += (
-            f"• {item.get('market_hash_name', 'Неизвестный предмет')}\n"
-            f"  Качество: {item.get('quality') or '-'}\n"
-            f"  Float: {item.get('float_value') or '-'}\n"
-            f"  Цена: ${item.get('price_steam') or 0:.2f}\n\n"
-        )
-
-    if len(items) > 10:
-        text += f"... и ещё {len(items) - 10} предметов"
-
-    if is_callback:
-        await event.message.edit_text(text, reply_markup=inventory_keyboard(has_steam))
-        await event.answer()
+    if len(media) == 1:
+        await callback.message.answer_photo(media[0].media, caption=media[0].caption)
     else:
-        await event.answer(text, reply_markup=inventory_keyboard(has_steam))
+        await callback.message.answer_media_group(media)
+    await notify(callback, "Картинки отправлены")
 
 
 @router.callback_query(F.data == "sync_inventory")
-async def cb_sync_inventory(callback: CallbackQuery, repos: Repositories) -> None:
-    user = await repos.users.get_by_telegram_id(callback.from_user.id)
-    if not user or not user.get("is_steam_linked"):
-        await callback.answer("❌ Steam не привязан", show_alert=True)
+async def cb_sync_inventory(callback: CallbackQuery, repos: Repositories, config: BotConfig) -> None:
+    user = await ensure_user(repos, callback.from_user)
+    if not user.get("is_steam_linked"):
+        await notify(callback, "❌ Steam не привязан. Откройте профиль.", alert=True)
         return
 
-    await callback.message.edit_text("🔄 <b>Синхронизация с Steam...</b>\n\nПолучение инвентаря, подождите...")
-    await callback.answer()
+    await notify(callback, "Синхронизирую…")
+    await edit_or_send(callback.message, "🔄 Загружаю инвентарь из Steam…")
 
-    steam_id = user.get("steam_id")
-    if not steam_id:
-        await callback.message.edit_text("❌ Steam ID не найден в профиле", reply_markup=back_to_main_keyboard())
-        return
-
-    try:
-        steam_api = await get_steam_api()
-        inventory = await steam_api.get_player_inventory(steam_id)
-        
-        if not inventory.success:
-            error = inventory.error or "Неизвестная ошибка"
-            await callback.message.edit_text(
-                f"❌ Ошибка синхронизации: {error}\n\n"
-                "Возможные причины:\n"
-                "• Инвентарь приватный (нужен Steam API Key)\n"
-                "• Неверный Steam ID\n"
-                "• Временные проблемы с Steam API",
-                reply_markup=inventory_keyboard(True)
-            )
-            return
-
-        # Обогащаем предметы данными из схемы
-        items = await steam_api.resolve_item_details(inventory.items)
-
-        # Сохраняем в БД
-        saved_count = 0
-        for item in items:
-            if item.market_hash_name:
-                await repos.items.create_or_update(
-                    owner_id=user["id"],
-                    asset_id=item.asset_id,
-                    class_id=item.class_id,
-                    instance_id=item.instance_id,
-                    market_hash_name=item.market_hash_name,
-                    market_name=item.market_name,
-                    name=item.name,
-                    type=item.type,
-                    quality=item.quality,
-                    float_value=item.float_value,
-                    paint_seed=item.paint_seed,
-                    stickers=item.stickers,
-                    tradable=item.tradable,
-                    marketable=item.marketable,
-                )
-                saved_count += 1
-
-        await callback.message.edit_text(
-            f"✅ <b>Синхронизация завершена!</b>\n\n"
-            f"Получено предметов: {inventory.total_count}\n"
-            f"Сохранено в БД: {saved_count}\n\n"
-            "Теперь вы можете просматривать инвентарь и создавать предложения.",
-            reply_markup=inventory_keyboard(True)
-        )
-
-    except SteamAPIError as e:
-        await callback.message.edit_text(
-            f"❌ Ошибка Steam API: {e}",
-            reply_markup=inventory_keyboard(True)
-        )
-    except Exception as e:
-        await callback.message.edit_text(
-            f"❌ Неожиданная ошибка: {e}",
-            reply_markup=inventory_keyboard(True)
-        )
+    report = await sync_inventory(repos, user, config)
+    user = await repos.users.get_by_id(user["id"])
+    text, markup = await _inventory_view(user, repos)
+    await edit_or_send(
+        callback.message,
+        "\n\n———\n\n".join([format_sync_report(report), text]),
+        markup,
+    )

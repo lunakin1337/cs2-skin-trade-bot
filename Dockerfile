@@ -1,29 +1,16 @@
-# Dockerfile для CS2 Skin Trade Bot
+# CS2 Skin Trade Bot
 FROM python:3.11-slim
 
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app/src
 
-# Установка системных зависимостей
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-# Копирование файлов зависимостей
+# Сначала зависимости: слой кэшируется, пока не менялся код
 COPY pyproject.toml ./
-
-# Установка Python зависимостей
-RUN pip install --no-cache-dir -e .
-
-# Копирование исходного кода
 COPY src/ ./src/
-COPY .env.example ./
+RUN pip install --no-cache-dir .
 
-# Создание директории для данных
 RUN mkdir -p data
 
-# Переменные окружения
-ENV PYTHONPATH=/app/src
-ENV PYTHONUNBUFFERED=1
-
-# Запуск бота
 CMD ["python", "-m", "src.bot.main"]

@@ -4,62 +4,83 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config.settings import load_config
-from database import Database
-from database.models import SCHEMA
-from database.repository import Repositories
-from bot.middlewares.db import DbMiddleware
 from bot.handlers import (
+    admin_router,
+    create_offer_router,
+    escrow_router,
+    inventory_router,
+    offers_router,
+    profile_router,
+    ratings_router,
+    start_router,
+    trade_flow_router,
+    trades_router,
+)
+from bot.middlewares.db import DbMiddleware
+from bot.middlewares.logging import LoggingMiddleware
+from bot.middlewares.throttling import ThrottlingMiddleware
+from bot.utils.prices import close_price_fetcher
+from bot.utils.steam import close_steam_client
+from config.settings import BotConfig, load_config
+from database import Repositories, init_database
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+ROUTERS = (
     start_router,
     profile_router,
     inventory_router,
     offers_router,
-    trades_router,
-    admin_router,
     create_offer_router,
+    trades_router,
     trade_flow_router,
     escrow_router,
     ratings_router,
+    admin_router,
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+
+def create_dispatcher(config: BotConfig) -> Dispatcher:
+    """Собрать диспетчер с роутерами (используется и в тестах)."""
+    dispatcher = Dispatcher(storage=MemoryStorage())
+    for router in ROUTERS:
+        dispatcher.include_router(router)
+    return dispatcher
 
 
 async def main() -> None:
     config = load_config()
-
-    bot = Bot(token=config.token)
-    dp = Dispatcher(storage=MemoryStorage())
-
-    db = Database(db_path=config.db_path)
-    await db.connect()
-    await db.init_schema(SCHEMA)
-
+    db = await init_database(config.db_path)
     repos = Repositories(db)
 
-    # Middleware для передачи repos и config в хендлеры
-    dp.message.middleware(DbMiddleware(repos, config))
-    dp.callback_query.middleware(DbMiddleware(repos, config))
+    session = AiohttpSession(proxy=config.telegram_proxy) if config.telegram_proxy else None
+    bot = Bot(
+        token=config.token,
+        session=session,
+        default=DefaultBotProperties(parse_mode=config.parse_mode),
+    )
+    dispatcher = create_dispatcher(config)
 
-    # Регистрация роутеров
-    dp.include_router(start_router)
-    dp.include_router(profile_router)
-    dp.include_router(inventory_router)
-    dp.include_router(offers_router)
-    dp.include_router(trades_router)
-    dp.include_router(admin_router)
-    dp.include_router(create_offer_router)
-    dp.include_router(trade_flow_router)
-    dp.include_router(escrow_router)
-    dp.include_router(ratings_router)
+    dispatcher.update.middleware(LoggingMiddleware())
+    dispatcher.message.middleware(ThrottlingMiddleware(min_interval=0.5))
+    dispatcher.callback_query.middleware(ThrottlingMiddleware(min_interval=0.2))
+    dispatcher.message.middleware(DbMiddleware(repos, config))
+    dispatcher.callback_query.middleware(DbMiddleware(repos, config))
 
     logger.info("Бот запущен")
     try:
-        await dp.start_polling(bot)
+        await dispatcher.start_polling(bot)
     finally:
+        await close_price_fetcher()
+        await close_steam_client()
         await db.close()
         await bot.session.close()
 

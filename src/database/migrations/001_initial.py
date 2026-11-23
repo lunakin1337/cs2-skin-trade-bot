@@ -1,14 +1,8 @@
-"""Схема базы данных SQLite."""
+"""Миграция 001: начальная схема БД.
 
-# Таблицы:
-# users - пользователи Telegram + Steam профили
-# items - инвентарь пользователей (скины)
-# trades - сделки (эскроу)
-# trade_items - предметы в сделке
-# offers - публичные предложения обмена
-# ratings - рейтинг и отзывы
-# disputes - споры
-# settings - настройки бота
+DDL зафиксирован здесь, а не в отдельном модуле схемы: история изменений
+базы живёт только в миграциях.
+"""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -55,10 +49,10 @@ CREATE TABLE IF NOT EXISTS offers (
     creator_id INTEGER NOT NULL,
     title TEXT NOT NULL,
     description TEXT,
-    items_offered TEXT NOT NULL,  -- JSON массив id предметов, которые отдаёт создатель
-    items_wanted TEXT NOT NULL,   -- JSON массив описаний желаемых предметов
+    items_offered TEXT NOT NULL,
+    items_wanted TEXT NOT NULL,
     price REAL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'active',  -- active, completed, cancelled, expired
+    status TEXT NOT NULL DEFAULT 'active',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (creator_id) REFERENCES users(id)
@@ -69,7 +63,7 @@ CREATE TABLE IF NOT EXISTS trades (
     buyer_id INTEGER NOT NULL,
     seller_id INTEGER NOT NULL,
     offer_id INTEGER,
-    status TEXT NOT NULL DEFAULT 'pending',  -- pending, confirmed, in_escrow, completed, cancelled, disputed
+    status TEXT NOT NULL DEFAULT 'pending',
     steam_trade_offer_id TEXT,
     escrow_timeout_at TEXT,
     confirmation_timeout_at TEXT,
@@ -112,7 +106,7 @@ CREATE TABLE IF NOT EXISTS disputes (
     trade_id INTEGER NOT NULL,
     opened_by INTEGER NOT NULL,
     reason TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'open',  -- open, resolved, closed
+    status TEXT NOT NULL DEFAULT 'open',
     admin_note TEXT,
     resolved_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -136,3 +130,26 @@ CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 CREATE INDEX IF NOT EXISTS idx_ratings_user ON ratings(to_user_id);
 CREATE INDEX IF NOT EXISTS idx_disputes_status ON disputes(status);
 """
+
+TABLES = [
+    "settings",
+    "disputes",
+    "ratings",
+    "trade_items",
+    "trades",
+    "offers",
+    "items",
+    "users",
+]
+
+
+async def upgrade(db) -> None:
+    """Применить миграцию."""
+    await db.init_schema(SCHEMA)
+
+
+async def downgrade(db) -> None:
+    """Откатить миграцию."""
+    for table in TABLES:
+        await db.execute(f"DROP TABLE IF EXISTS {table}")
+    await db.commit()

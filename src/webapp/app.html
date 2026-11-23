@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>CS2 Skin Trade</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --bg-2: var(--tg-theme-secondary-bg-color, #f3f4f6);
+    --text: var(--tg-theme-text-color, #1c1c1e);
+    --hint: var(--tg-theme-hint-color, #8a8a8f);
+    --link: var(--tg-theme-link-color, #2b6cb0);
+    --button: var(--tg-theme-button-color, #2b6cb0);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --line: rgba(128, 128, 128, 0.25);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 0 0 24px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  header img.avatar, header .avatar-stub {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: var(--bg-2);
+    flex: 0 0 auto;
+  }
+
+  header .who { min-width: 0; }
+  header .who .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header .who .meta { color: var(--hint); font-size: 13px; margin-top: 2px; }
+
+  .tabs {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px 4px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 2;
+  }
+
+  .tabs button {
+    flex: 1;
+    padding: 9px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .tabs button.active {
+    background: var(--button);
+    border-color: var(--button);
+    color: var(--button-text);
+  }
+
+  main { padding: 12px 16px 0; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .toolbar .stat { color: var(--hint); font-size: 13px; }
+  .toolbar .stat b { color: var(--text); }
+
+  button.action {
+    padding: 9px 14px;
+    border-radius: 10px;
+    border: none;
+    background: var(--button);
+    color: var(--button-text);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  button.action:disabled { opacity: 0.55; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
+
+  .card {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-2);
+  }
+
+  .card .thumb {
+    height: 96px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(128, 128, 128, 0.08);
+  }
+
+  .card .thumb img { max-height: 88px; max-width: 100%; }
+
+  .card .body { padding: 8px 10px 10px; }
+  .card .title {
+    font-size: 13px;
+    line-height: 1.3;
+    height: 2.6em;
+    overflow: hidden;
+  }
+  .card .price { font-weight: 600; margin-top: 6px; font-size: 13px; }
+  .card .price.unknown { color: var(--hint); font-weight: 500; }
+  .card .badges { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(128, 128, 128, 0.16);
+    color: var(--hint);
+  }
+
+  .row {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: var(--bg-2);
+  }
+  .row .head { display: flex; justify-content: space-between; gap: 10px; }
+  .row .head b { font-size: 14px; }
+  .row .sub { color: var(--hint); font-size: 13px; margin-top: 6px; }
+
+  .pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    margin-top: 16px;
+  }
+  .pager button {
+    padding: 8px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+  }
+  .pager button:disabled { opacity: 0.4; }
+
+  .state { text-align: center; color: var(--hint); padding: 32px 12px; line-height: 1.5; }
+
+  a.link { color: var(--link); text-decoration: none; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="avatar-stub" id="avatar"></div>
+  <div class="who">
+    <div class="name" id="who-name">Загрузка…</div>
+    <div class="meta" id="who-meta"></div>
+  </div>
+</header>
+
+<div class="tabs">
+  <button id="tab-inventory" class="active">🎒 Инвентарь</button>
+  <button id="tab-offers">📋 Предложения</button>
+</div>
+
+<main>
+  <section id="view-inventory">
+    <div class="toolbar">
+      <div class="stat" id="inventory-stat"></div>
+      <button class="action" id="sync">🔄 Синхронизировать</button>
+    </div>
+    <div id="inventory-list"></div>
+    <div class="pager" id="inventory-pager" hidden>
+      <button id="page-prev">◀️</button>
+      <span class="stat" id="page-label"></span>
+      <button id="page-next">▶️</button>
+    </div>
+  </section>
+
+  <section id="view-offers" hidden>
+    <div id="offers-list"></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  const tg = window.Telegram ? window.Telegram.WebApp : null;
+  const state = { page: 0, pages: 1 };
+  let profile = null;
+
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
+
+  const $ = (id) => document.getElementById(id);
+
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[ch]);
+  }
+
+  function money(price) {
+    return typeof price === "number" && price > 0
+      ? "$" + price.toFixed(2)
+      : null;
+  }
+
+  function authData() {
+    if (tg && tg.initData) return tg.initData;
+    // Отладка вне Telegram: /?initData=<подписанные данные>
+    return new URLSearchParams(location.search).get("initData") || "";
+  }
+
+  async function api(path, options) {
+    const initData = authData();
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        ...(options && options.headers ? options.headers : {}),
+        "X-Telegram-Init-Data": initData
+      }
+    });
+
+    if (response.status === 401) {
+      throw new Error("unauthorized");
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.hint || data.error || "Ошибка " + response.status);
+    }
+    return data;
+  }
+
+  function showState(container, text) {
+    container.innerHTML = '<div class="state">' + esc(text) + "</div>";
+  }
+
+  function renderProfile() {
+    if (!profile) return;
+
+    const steam = profile.steam || {};
+    const name = steam.persona || profile.first_name || profile.username || "Игрок";
+    $("who-name").textContent = name;
+
+    const meta = [];
+    if (profile.username) meta.push("@" + profile.username);
+    meta.push((profile.rating || 0).toFixed(1) + " ⭐");
+    meta.push((profile.trades_count || 0) + " сделок");
+    if (!steam.linked) meta.push("Steam не привязан");
+    $("who-meta").textContent = meta.join(" · ");
+
+    const avatar = $("avatar");
+    if (steam.avatar) {
+      avatar.outerHTML = '<img class="avatar" id="avatar" src="' + esc(steam.avatar) + '" alt="">';
+    }
+  }
+
+  async function loadMe() {
+    profile = await api("/api/me");
+    renderProfile();
+    return profile;
+  }
+
+  async function loadInventory(page) {
+    const list = $("inventory-list");
+    showState(list, "Загружаю инвентарь…");
+
+    const data = await api("/api/inventory?page=" + page);
+    state.page = data.page;
+    state.pages = data.pages;
+
+    const value = profile && profile.inventory ? money(profile.inventory.value) : null;
+    $("inventory-stat").innerHTML =
+      "<b>" + data.total + "</b> предметов" + (value ? " · " + esc(value) : "");
+
+    if (!data.items.length) {
+      const hint = profile && profile.steam && profile.steam.linked
+        ? "Нажмите «Синхронизировать», чтобы подтянуть скины из Steam."
+        : "Привяжите Steam-аккаунт в боте — профиль → «Привязать Steam».";
+      showState(list, hint);
+    } else {
+      list.innerHTML = '<div class="grid">' + data.items.map((item) => {
+        const price = money(item.price);
+        const badges = [item.rarity, item.exterior]
+          .filter(Boolean)
+          .map((badge) => '<span class="badge">' + esc(badge) + "</span>")
+          .join("");
+        const thumb = item.image
+          ? '<img src="' + esc(item.image) + '" alt="" loading="lazy">'
+          : "";
+
+        return '<article class="card">' +
+          '<div class="thumb">' + thumb + "</div>" +
+          '<div class="body">' +
+            '<div class="title">' + esc(item.name) + "</div>" +
+            '<div class="price ' + (price ? "" : "unknown") + '">' + (price || "цена неизвестна") + "</div>" +
+            (badges ? '<div class="badges">' + badges + "</div>" : "") +
+            (item.tradable ? "" : '<div class="badges"><span class="badge">🔒 не торгуется</span></div>') +
+          "</div>" +
+        "</article>";
+      }).join("") + "</div>";
+    }
+
+    const pager = $("inventory-pager");
+    pager.hidden = data.pages <= 1;
+    $("page-label").textContent = (data.page + 1) + " / " + data.pages;
+    $("page-prev").disabled = data.page === 0;
+    $("page-next").disabled = data.page + 1 >= data.pages;
+  }
+
+  async function loadOffers() {
+    const list = $("offers-list");
+    showState(list, "Загружаю предложения…");
+
+    const data = await api("/api/offers");
+    if (!data.items.length) {
+      showState(list, "Активных предложений нет. Создайте своё в боте: /create_offer.");
+      return;
+    }
+
+    list.innerHTML = data.items.map((offer) => {
+      const seller = offer.own ? "вы" : "@" + (offer.seller || "—");
+      return '<div class="row">' +
+        '<div class="head"><b>#' + offer.id + " · " + esc(offer.title) + "</b>" +
+          "<span>" + (offer.rating || 0).toFixed(1) + " ⭐</span></div>" +
+        '<div class="sub">Продавец: ' + esc(seller) + "</div>" +
+        '<div class="sub">Хочет: ' + esc(offer.wants || "—") + "</div>" +
+        (offer.summary ? '<div class="sub">' + esc(offer.summary) + "</div>" : "") +
+        (offer.own ? "" : '<div class="sub">Принять: /offers в боте</div>') +
+      "</div>";
+    }).join("");
+  }
+
+  function switchTab(tab) {
+    $("tab-inventory").classList.toggle("active", tab === "inventory");
+    $("tab-offers").classList.toggle("active", tab === "offers");
+    $("view-inventory").hidden = tab !== "inventory";
+    $("view-offers").hidden = tab !== "offers";
+  }
+
+  $("tab-inventory").addEventListener("click", () => { switchTab("inventory"); loadInventory(state.page).catch(fail); });
+  $("tab-offers").addEventListener("click", () => { switchTab("offers"); loadOffers().catch(fail); });
+  $("page-prev").addEventListener("click", () => loadInventory(state.page - 1).catch(fail));
+  $("page-next").addEventListener("click", () => loadInventory(state.page + 1).catch(fail));
+
+  $("sync").addEventListener("click", async () => {
+    const button = $("sync");
+    button.disabled = true;
+    button.textContent = "Синхронизирую…";
+
+    try {
+      const report = await api("/api/inventory/sync", { method: "POST" });
+      if (tg) tg.showAlert("Обновлено: " + report.found + " предметов");
+      await loadMe();
+      await loadInventory(0);
+    } catch (error) {
+      if (tg) tg.showAlert(error.message === "unauthorized"
+        ? "Откройте приложение через кнопку в боте"
+        : error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "🔄 Синхронизировать";
+    }
+  });
+
+  function fail(error) {
+    const text = error.message === "unauthorized"
+      ? "Нужна авторизация через Telegram. Откройте приложение кнопкой «🌐 Приложение» в боте."
+      : error.message;
+    showState($("view-inventory").hidden ? $("offers-list") : $("inventory-list"), text);
+  }
+
+  loadMe()
+    .then(() => loadInventory(0))
+    .catch(fail);
+})();
+</script>
+</body>
+</html>

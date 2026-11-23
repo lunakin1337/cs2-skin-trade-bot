@@ -1,3 +1,30 @@
-# Database package
-from .models import SCHEMA
-from .repository import Database, Repositories, UserRepository, ItemRepository, OfferRepository, TradeRepository, TradeItemRepository, RatingRepository, DisputeRepository, SettingsRepository
+"""Пакет базы данных: соединение, миграции и репозитории."""
+
+from .migrations.migrate import init_database, run_migrations
+from .repository import (
+    Database,
+    DisputeRepository,
+    ItemRepository,
+    OfferRepository,
+    RatingRepository,
+    Repositories,
+    SettingsRepository,
+    TradeItemRepository,
+    TradeRepository,
+    UserRepository,
+)
+
+__all__ = [
+    "Database",
+    "DisputeRepository",
+    "ItemRepository",
+    "OfferRepository",
+    "RatingRepository",
+    "Repositories",
+    "SettingsRepository",
+    "TradeItemRepository",
+    "TradeRepository",
+    "UserRepository",
+    "init_database",
+    "run_migrations",
+]

@@ -1,77 +1,48 @@
-"""Хендеры сделок."""
+"""Список сделок пользователя."""
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
+from bot.keyboards.inline import back_to_main_keyboard, trades_keyboard
+from bot.utils.formatters import format_trade
+from bot.utils.telegram import edit_or_send, notify
+from bot.utils.users import ensure_user
 from database.repository import Repositories
-from bot.keyboards.inline import back_to_main_keyboard
 
 router = Router()
+
+EMPTY_TEXT = (
+    "🔄 <b>Ваши сделки</b>\n\n"
+    "Сделок пока нет. Создайте предложение через /create_offer "
+    "или примите чужое в /offers."
+)
+
+
+async def render_trades(repos: Repositories, telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Текст и кнопки раздела сделок для конкретного пользователя."""
+    user = await repos.users.get_by_telegram_id(telegram_id)
+    if not user:
+        return "Пользователь не найден", back_to_main_keyboard()
+
+    trades = await repos.trades.get_by_user(user["id"], limit=10)
+    if not trades:
+        return EMPTY_TEXT, back_to_main_keyboard()
+
+    blocks = [format_trade(trade, user["id"]) for trade in trades]
+    return "\n\n".join(["🔄 <b>Ваши сделки</b>", *blocks]), trades_keyboard(trades, user["id"])
 
 
 @router.message(Command("trades"))
 async def cmd_trades(message: Message, repos: Repositories) -> None:
-    user = await repos.users.get_by_telegram_id(message.from_user.id)
-    if not user:
-        await repos.users.create_or_update(
-            telegram_id=message.from_user.id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            last_name=message.from_user.last_name,
-        )
-        user = await repos.users.get_by_telegram_id(message.from_user.id)
-
-    trades = await repos.trades.get_by_user(user["id"], limit=10)
-
-    if not trades:
-        await message.answer(
-            "🔄 <b>Ваши сделки</b>\n\n"
-            "У вас пока нет сделок.\n"
-            "Создайте предложение обмена через /create_offer",
-            reply_markup=back_to_main_keyboard(),
-        )
-        return
-
-    text = "🔄 <b>Ваши сделки</b>\n\n"
-    for trade in trades:
-        text += (
-            f"• Сделка #{trade['id']}\n"
-            f"  Статус: {trade['status']}\n"
-            f"  Покупатель: @{trade.get('buyer_username') or '-'}\n"
-            f"  Продавец: @{trade.get('seller_username') or '-'}\n\n"
-        )
-
-    await message.answer(text, reply_markup=back_to_main_keyboard())
+    await ensure_user(repos, message.from_user)
+    text, markup = await render_trades(repos, message.from_user.id)
+    await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "trades")
 async def cb_trades(callback: CallbackQuery, repos: Repositories) -> None:
-    user = await repos.users.get_by_telegram_id(callback.from_user.id)
-    if not user:
-        await callback.answer("Пользователь не найден")
-        return
-
-    trades = await repos.trades.get_by_user(user["id"], limit=10)
-
-    if not trades:
-        await callback.message.edit_text(
-            "🔄 <b>Ваши сделки</b>\n\n"
-            "У вас пока нет сделок.\n"
-            "Создайте предложение обмена через /create_offer",
-            reply_markup=back_to_main_keyboard(),
-        )
-        await callback.answer()
-        return
-
-    text = "🔄 <b>Ваши сделки</b>\n\n"
-    for trade in trades:
-        text += (
-            f"• Сделка #{trade['id']}\n"
-            f"  Статус: {trade['status']}\n"
-            f"  Покупатель: @{trade.get('buyer_username') or '-'}\n"
-            f"  Продавец: @{trade.get('seller_username') or '-'}\n\n"
-        )
-
-    await callback.message.edit_text(text, reply_markup=back_to_main_keyboard())
-    await callback.answer()
+    await ensure_user(repos, callback.from_user)
+    text, markup = await render_trades(repos, callback.from_user.id)
+    await edit_or_send(callback.message, text, markup)
+    await notify(callback)

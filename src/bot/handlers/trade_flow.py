@@ -1,113 +1,191 @@
-"""Хендеры трейд-флоу (Срез 8) - создание сделок и подтверждение."""
+"""Трейд-флоу: принятие предложения, подтверждение, обмен и завершение."""
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+import json
+import logging
+
+from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message
 
-from database.repository import Repositories
+from bot.handlers.trades import render_trades
 from bot.keyboards.inline import back_to_main_keyboard
+from bot.utils.telegram import edit_or_send, notify
+from bot.utils.users import ensure_user
+from database.repository import Repositories
+
+logger = logging.getLogger(__name__)
 
 router = Router()
+
+TRADE_INFO = (
+    "🔄 <b>Как проходит обмен</b>\n\n"
+    "1. Принимаете предложение в /offers — создаётся сделка\n"
+    "2. Обе стороны подтверждают её в /trades\n"
+    "3. Открывается кнопка «Обмен» — она ведёт на Steam Trade URL контрагента\n"
+    "4. Каждая сторона жмёт «Получил», когда скины на руках\n"
+    "5. После этого сделка закрывается и можно поставить оценку\n\n"
+    "Если что-то пошло не так — /dispute."
+)
 
 
 @router.message(Command("trade"))
 async def cmd_trade_info(message: Message) -> None:
-    await message.answer(
-        "🔄 <b>Трейд-флоу</b>\n\n"
-        "Чтобы начать сделку:\n"
-        "1. Найдите предложение в /offers\n"
-        "2. Ответьте на него — бот создаст сделку\n"
-        "3. Обе стороны подтверждают обмен\n"
-        "4. Скины передаются через эскроу\n\n"
-        "Команды:\n"
-        "/trades — ваши сделки\n"
-        "/create_offer — создать предложение",
-        reply_markup=back_to_main_keyboard(),
-    )
+    await message.answer(TRADE_INFO, reply_markup=back_to_main_keyboard())
+
+
+def _role(trade: dict, user_id: int) -> str | None:
+    if trade["buyer_id"] == user_id:
+        return "buyer"
+    if trade["seller_id"] == user_id:
+        return "seller"
+    return None
+
+
+async def _refresh_message(callback: CallbackQuery, repos: Repositories) -> None:
+    text, markup = await render_trades(repos, callback.from_user.id)
+    await edit_or_send(callback.message, text, markup)
 
 
 @router.callback_query(F.data.startswith("accept_offer_"))
 async def cb_accept_offer(callback: CallbackQuery, repos: Repositories) -> None:
-    offer_id = int(callback.data.split("_")[-1])
+    try:
+        offer_id = int(callback.data.rsplit("_", 1)[-1])
+    except ValueError:
+        await notify(callback, "Некорректное предложение", alert=True)
+        return
+
     offer = await repos.offers.get_by_id(offer_id)
-
     if not offer:
-        await callback.answer("Предложение не найдено")
+        await notify(callback, "Предложение не найдено", alert=True)
         return
-
     if offer["status"] != "active":
-        await callback.answer("Предложение больше не активно")
+        await notify(callback, "Предложение больше не активно", alert=True)
         return
 
-    user = await repos.users.get_by_telegram_id(callback.from_user.id)
-    if not user:
-        await repos.users.create_or_update(
-            telegram_id=callback.from_user.id,
-            username=callback.from_user.username,
-            first_name=callback.from_user.first_name,
-            last_name=callback.from_user.last_name,
-        )
-        user = await repos.users.get_by_telegram_id(callback.from_user.id)
-
+    user = await ensure_user(repos, callback.from_user)
     if user["id"] == offer["creator_id"]:
-        await callback.answer("Вы не можете принять своё собственное предложение")
+        await notify(callback, "Нельзя принять своё предложение", alert=True)
+        return
+    if not user.get("steam_trade_url"):
+        await notify(callback, "Сначала укажите Trade URL в профиле", alert=True)
         return
 
-    # Создаём сделку
     trade_id = await repos.trades.create(
         buyer_id=user["id"],
         seller_id=offer["creator_id"],
         offer_id=offer_id,
     )
-
-    # Добавляем предметы в сделку
-    import json
-    items_offered = json.loads(offer["items_offered"])
-    for item_id in items_offered:
+    for item_id in json.loads(offer["items_offered"] or "[]"):
         await repos.trade_items.add(
             trade_id=trade_id,
             item_id=item_id,
             from_user_id=offer["creator_id"],
             to_user_id=user["id"],
         )
+    await repos.offers.update_status(offer_id, "in_trade")
 
-    await repos.offers.update_status(offer_id, "completed")
-
-    await callback.message.edit_text(
-        f"✅ Сделка #{trade_id} создана!\n\n"
-        f"Предложение: {offer['title']}\n"
-        f"Продавец: @{offer.get('username') or '-'}\n"
-        f"Статус: pending (ожидает подтверждения)\n\n"
-        f"Обе стороны должны подтвердить обмен.",
-        reply_markup=back_to_main_keyboard(),
+    text, markup = await render_trades(repos, callback.from_user.id)
+    await edit_or_send(
+        callback.message,
+        f"✅ Сделка <b>#{trade_id}</b> создана — подтвердите её.\n\n{text}",
+        markup,
     )
-    await callback.answer(f"Сделка #{trade_id} создана")
+    await notify(callback, f"Сделка #{trade_id} создана")
 
 
-@router.message(Command("confirm_trade"))
-async def cmd_confirm_trade(message: Message, repos: Repositories) -> None:
-    user = await repos.users.get_by_telegram_id(message.from_user.id)
-    if not user:
-        await message.answer("Пользователь не найден")
+@router.callback_query(F.data.startswith("trade_confirm_"))
+async def cb_trade_confirm(callback: CallbackQuery, repos: Repositories) -> None:
+    trade_id = _trade_id(callback.data)
+    trade = await repos.trades.get_by_id(trade_id) if trade_id else None
+    if not trade:
+        await notify(callback, "Сделка не найдена", alert=True)
         return
 
-    # Находим pending сделки пользователя
-    trades = await repos.trades.get_by_user(user["id"])
-    pending = [t for t in trades if t["status"] == "pending"]
-
-    if not pending:
-        await message.answer(
-            "❌ У вас нет сделок, ожидающих подтверждения",
-            reply_markup=back_to_main_keyboard(),
-        )
+    user = await ensure_user(repos, callback.from_user)
+    role = _role(trade, user["id"])
+    if role is None:
+        await notify(callback, "Это не ваша сделка", alert=True)
+        return
+    if trade["status"] != "pending":
+        await notify(callback, "Сделка уже подтверждена или закрыта", alert=True)
         return
 
-    text = "🔄 <b>Сделки, ожидающие подтверждения</b>\n\n"
-    for trade in pending:
-        text += (
-            f"• Сделка #{trade['id']}\n"
-            f"  Статус: {trade['status']}\n"
-            f"  Чтобы подтвердить: /confirm_trade_{trade['id']}\n\n"
-        )
+    await repos.trades.set_confirmed(trade_id, role)
+    trade = await repos.trades.get_by_id(trade_id)
 
-    await message.answer(text, reply_markup=back_to_main_keyboard())
+    if trade["buyer_confirmed_at"] and trade["seller_confirmed_at"]:
+        await repos.trades.update_status(trade_id, "in_escrow")
+        await _refresh_message(callback, repos)
+        await notify(callback, "Обе стороны подтвердили — можно обмениваться")
+        return
+
+    await _refresh_message(callback, repos)
+    await notify(callback, "Ждём подтверждения второй стороны")
+
+
+@router.callback_query(F.data.startswith("trade_complete_"))
+async def cb_trade_complete(callback: CallbackQuery, repos: Repositories) -> None:
+    trade_id = _trade_id(callback.data)
+    trade = await repos.trades.get_by_id(trade_id) if trade_id else None
+    if not trade:
+        await notify(callback, "Сделка не найдена", alert=True)
+        return
+
+    user = await ensure_user(repos, callback.from_user)
+    role = _role(trade, user["id"])
+    if role is None:
+        await notify(callback, "Это не ваша сделка", alert=True)
+        return
+    if trade["status"] != "in_escrow":
+        await notify(callback, "Сделка ещё не готова к завершению", alert=True)
+        return
+    if trade.get(f"{role}_completed_at"):
+        await notify(callback, "Вы уже отметили получение", alert=True)
+        return
+
+    await repos.trades.set_completed_side(trade_id, role)
+    trade = await repos.trades.get_by_id(trade_id)
+
+    if trade["buyer_completed_at"] and trade["seller_completed_at"]:
+        await repos.trades.mark_completed(trade_id)
+        for participant in (trade["buyer_id"], trade["seller_id"]):
+            await repos.users.increment_trades_count(participant)
+        if trade.get("offer_id"):
+            await repos.offers.update_status(trade["offer_id"], "completed")
+        await _refresh_message(callback, repos)
+        await notify(callback, "Сделка завершена — поставьте оценку контрагенту")
+        return
+
+    await _refresh_message(callback, repos)
+    await notify(callback, "Отметили получение, ждём вторую сторону")
+
+
+@router.callback_query(F.data.startswith("trade_cancel_"))
+async def cb_trade_cancel(callback: CallbackQuery, repos: Repositories) -> None:
+    trade_id = _trade_id(callback.data)
+    trade = await repos.trades.get_by_id(trade_id) if trade_id else None
+    if not trade:
+        await notify(callback, "Сделка не найдена", alert=True)
+        return
+
+    user = await ensure_user(repos, callback.from_user)
+    if _role(trade, user["id"]) is None:
+        await notify(callback, "Это не ваша сделка", alert=True)
+        return
+    if trade["status"] not in {"pending", "confirmed", "in_escrow"}:
+        await notify(callback, "Сделку уже нельзя отменить", alert=True)
+        return
+
+    await repos.trades.update_status(trade_id, "cancelled")
+    if trade.get("offer_id"):
+        await repos.offers.update_status(trade["offer_id"], "active")
+
+    await _refresh_message(callback, repos)
+    await notify(callback, "Сделка отменена, предложение снова активно")
+
+
+def _trade_id(callback_data: str) -> int | None:
+    try:
+        return int(callback_data.rsplit("_", 1)[-1])
+    except ValueError:
+        return None

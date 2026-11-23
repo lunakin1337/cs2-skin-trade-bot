@@ -3,7 +3,7 @@
 import aiosqlite
 import json
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class Database:
@@ -64,21 +64,17 @@ class UserRepository:
                 """,
                 (username, first_name, last_name, telegram_id),
             )
-            await self.db.commit()
-            return dict(row)
         else:
-            cur = await self.db.execute(
+            await self.db.execute(
                 """
                 INSERT INTO users (telegram_id, username, first_name, last_name)
                 VALUES (?, ?, ?, ?)
                 """,
                 (telegram_id, username, first_name, last_name),
             )
-            await self.db.commit()
-            new_id = cur.lastrowid
-            cur2 = await self.db.execute("SELECT * FROM users WHERE id = ?", (new_id,))
-            row = await cur2.fetchone()
-            return dict(row)
+        await self.db.commit()
+
+        return await self.get_by_telegram_id(telegram_id)
 
     async def get_by_telegram_id(self, telegram_id: int) -> Optional[Dict[str, Any]]:
         cur = await self.db.execute(
@@ -101,16 +97,111 @@ class UserRepository:
         user_id: int,
         steam_id: str,
         steam_trade_url: str,
+        *,
+        trade_partner: Optional[str] = None,
+        trade_token: Optional[str] = None,
+        persona_name: Optional[str] = None,
+        avatar_url: Optional[str] = None,
+        profile_url: Optional[str] = None,
     ) -> None:
+        """Привязать Steam-аккаунт и trade URL одним обновлением."""
         await self.db.execute(
             """
             UPDATE users
-            SET steam_id = ?, steam_trade_url = ?, is_steam_linked = 1, updated_at = datetime('now')
+            SET steam_id = ?,
+                steam_trade_url = ?,
+                steam_trade_partner = ?,
+                steam_trade_token = ?,
+                is_steam_linked = 1,
+                steam_linked_at = datetime('now'),
+                steam_persona = COALESCE(?, steam_persona),
+                steam_avatar_url = COALESCE(?, steam_avatar_url),
+                steam_profile_url = COALESCE(?, steam_profile_url),
+                updated_at = datetime('now')
             WHERE id = ?
             """,
-            (steam_id, steam_trade_url, user_id),
+            (
+                steam_id,
+                steam_trade_url,
+                trade_partner,
+                trade_token,
+                persona_name,
+                avatar_url,
+                profile_url,
+                user_id,
+            ),
         )
         await self.db.commit()
+
+    async def set_steam_profile(
+        self,
+        user_id: int,
+        persona_name: Optional[str],
+        avatar_url: Optional[str],
+        profile_url: Optional[str],
+    ) -> None:
+        """Обновить кэш публичного профиля Steam."""
+        await self.db.execute(
+            """
+            UPDATE users
+            SET steam_persona = ?, steam_avatar_url = ?, steam_profile_url = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (persona_name, avatar_url, profile_url, user_id),
+        )
+        await self.db.commit()
+
+    async def set_trade_url(
+        self,
+        user_id: int,
+        steam_trade_url: str,
+        trade_partner: str,
+        trade_token: str,
+    ) -> None:
+        """Обновить только trade URL (например, если протух токен)."""
+        await self.db.execute(
+            """
+            UPDATE users
+            SET steam_trade_url = ?, steam_trade_partner = ?, steam_trade_token = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (steam_trade_url, trade_partner, trade_token, user_id),
+        )
+        await self.db.commit()
+
+    async def touch_inventory_sync(self, user_id: int) -> None:
+        """Отметить время успешной синхронизации инвентаря."""
+        await self.db.execute(
+            "UPDATE users SET inventory_synced_at = datetime('now') WHERE id = ?",
+            (user_id,),
+        )
+        await self.db.commit()
+
+    async def increment_trades_count(self, user_id: int) -> None:
+        """Посчитать завершённую сделку пользователю."""
+        await self.db.execute(
+            "UPDATE users SET trades_count = trades_count + 1, updated_at = datetime('now') WHERE id = ?",
+            (user_id,),
+        )
+        await self.db.commit()
+
+    async def recompute_rating(self, user_id: int) -> float:
+        """Пересчитать средний рейтинг по отзывам."""
+        await self.db.execute(
+            """
+            UPDATE users
+            SET rating = COALESCE((SELECT AVG(score) FROM ratings WHERE to_user_id = ?), 0),
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (user_id, user_id),
+        )
+        await self.db.commit()
+
+        user = await self.get_by_id(user_id)
+        return float(user["rating"]) if user else 0.0
 
     async def ban(self, user_id: int) -> None:
         await self.db.execute(
@@ -127,64 +218,160 @@ class UserRepository:
         await self.db.commit()
 
 
+ITEM_FIELDS = (
+    "steam_asset_id",
+    "market_hash_name",
+    "item_name",
+    "item_type",
+    "rarity",
+    "quality",
+    "exterior",
+    "float_value",
+    "paint_seed",
+    "stickers",
+    "image_url",
+    "icon_url",
+    "class_id",
+    "instance_id",
+    "price_steam",
+    "price_csfloat",
+    "price_buff",
+    "is_tradable",
+    "is_marketable",
+)
+
+FLAG_FIELDS = {"is_tradable", "is_marketable"}
+
+
 class ItemRepository:
     def __init__(self, db: Database):
         self.db = db
 
-    async def add(
-        self,
-        owner_id: int,
-        steam_asset_id: str,
-        market_hash_name: str,
-        item_name: Optional[str] = None,
-        item_type: Optional[str] = None,
-        rarity: Optional[str] = None,
-        quality: Optional[str] = None,
-        exterior: Optional[str] = None,
-        float_value: Optional[float] = None,
-        paint_seed: Optional[int] = None,
-        stickers: Optional[str] = None,
-        image_url: Optional[str] = None,
-        price_steam: Optional[float] = None,
-        price_csfloat: Optional[float] = None,
-        price_buff: Optional[float] = None,
-        is_tradable: bool = True,
-    ) -> int:
+    async def add(self, owner_id: int, steam_asset_id: str, market_hash_name: str, **fields: Any) -> int:
+        """Добавить предмет вручную (данные инвентаря обычно приходят через sync)."""
+        item = {"steam_asset_id": steam_asset_id, "market_hash_name": market_hash_name}
+        item.update({key: value for key, value in fields.items() if key in ITEM_FIELDS})
+        columns = ["owner_id", *item.keys()]
+        placeholders = ", ".join("?" for _ in columns)
         cur = await self.db.execute(
-            """
-            INSERT INTO items (
-                owner_id, steam_asset_id, market_hash_name, item_name, item_type,
-                rarity, quality, exterior, float_value, paint_seed, stickers,
-                image_url, price_steam, price_csfloat, price_buff, is_tradable
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                owner_id, steam_asset_id, market_hash_name, item_name, item_type,
-                rarity, quality, exterior, float_value, paint_seed, stickers,
-                image_url, price_steam, price_csfloat, price_buff, int(is_tradable),
-            ),
+            f"INSERT INTO items ({', '.join(columns)}) VALUES ({placeholders})",
+            (owner_id, *(_normalize_item_value(key, value) for key, value in item.items())),
         )
         await self.db.commit()
         return cur.lastrowid
 
-    async def get_by_owner(self, owner_id: int, tradable_only: bool = False) -> List[Dict[str, Any]]:
+    async def sync(self, owner_id: int, items: List[Dict[str, Any]]) -> tuple[int, int, int]:
+        """Привести инвентарь пользователя к состоянию Steam.
+
+        Возвращает (добавлено, обновлено, удалено).
+        """
+        cur = await self.db.execute(
+            "SELECT id, steam_asset_id FROM items WHERE owner_id = ?",
+            (owner_id,),
+        )
+        existing = {row["steam_asset_id"]: row["id"] for row in await cur.fetchall()}
+
+        created = updated = 0
+        seen: set[str] = set()
+
+        for item in items:
+            asset_id = str(item.get("steam_asset_id") or "").strip()
+            if not asset_id:
+                continue
+            seen.add(asset_id)
+            values = {key: item[key] for key in ITEM_FIELDS if key in item}
+
+            if asset_id in existing:
+                assignments = ", ".join(f"{key} = ?" for key in values)
+                await self.db.execute(
+                    f"""
+                    UPDATE items
+                    SET {assignments}, synced_at = datetime('now'), updated_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (
+                        *(_normalize_item_value(key, value) for key, value in values.items()),
+                        existing[asset_id],
+                    ),
+                )
+                updated += 1
+            else:
+                columns = ["owner_id", *values.keys(), "synced_at"]
+                placeholders = ", ".join("?" for _ in columns)
+                await self.db.execute(
+                    f"""
+                    INSERT INTO items ({', '.join(columns)}, updated_at)
+                    VALUES ({placeholders}, datetime('now'))
+                    """,
+                    (
+                        owner_id,
+                        *(_normalize_item_value(key, value) for key, value in values.items()),
+                        _now(),
+                    ),
+                )
+                created += 1
+
+        removed_ids = [item_id for asset_id, item_id in existing.items() if asset_id not in seen]
+        if removed_ids:
+            placeholders = ", ".join("?" for _ in removed_ids)
+            await self.db.execute(f"DELETE FROM items WHERE id IN ({placeholders})", tuple(removed_ids))
+
+        await self.db.commit()
+        return created, updated, len(removed_ids)
+
+    async def get_by_owner(
+        self,
+        owner_id: int,
+        tradable_only: bool = False,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        query = "SELECT * FROM items WHERE owner_id = ?"
+        params: list[Any] = [owner_id]
         if tradable_only:
-            cur = await self.db.execute(
-                "SELECT * FROM items WHERE owner_id = ? AND is_tradable = 1 ORDER BY created_at DESC",
-                (owner_id,),
-            )
-        else:
-            cur = await self.db.execute(
-                "SELECT * FROM items WHERE owner_id = ? ORDER BY created_at DESC",
-                (owner_id,),
-            )
-        rows = await cur.fetchall()
-        return [dict(r) for r in rows]
+            query += " AND is_tradable = 1"
+        query += " ORDER BY COALESCE(price_steam, 0) DESC, market_hash_name ASC"
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+
+        cur = await self.db.execute(query, tuple(params))
+        return [dict(row) for row in await cur.fetchall()]
+
+    async def count_by_owner(self, owner_id: int, tradable_only: bool = False) -> int:
+        query = "SELECT COUNT(*) AS cnt FROM items WHERE owner_id = ?"
+        if tradable_only:
+            query += " AND is_tradable = 1"
+        cur = await self.db.execute(query, (owner_id,))
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
+    async def sum_price(self, owner_id: int) -> float:
+        """Сумма известных цен Steam по инвентарю пользователя."""
+        cur = await self.db.execute(
+            "SELECT COALESCE(SUM(price_steam), 0) AS total FROM items WHERE owner_id = ?",
+            (owner_id,),
+        )
+        row = await cur.fetchone()
+        return float(row["total"]) if row else 0.0
 
     async def get_by_id(self, item_id: int) -> Optional[Dict[str, Any]]:
         cur = await self.db.execute("SELECT * FROM items WHERE id = ?", (item_id,))
         row = await cur.fetchone()
         return dict(row) if row else None
+
+    async def apply_prices(self, owner_id: int, prices: Dict[str, float]) -> None:
+        """Записать цены Steam для всех предметов пользователя с этими именами."""
+        for market_hash_name, price in prices.items():
+            await self.db.execute(
+                """
+                UPDATE items
+                SET price_steam = ?, updated_at = datetime('now')
+                WHERE owner_id = ? AND market_hash_name = ?
+                """,
+                (price, owner_id, market_hash_name),
+            )
+        await self.db.commit()
 
     async def delete(self, item_id: int) -> None:
         await self.db.execute("DELETE FROM items WHERE id = ?", (item_id,))
@@ -196,6 +383,18 @@ class ItemRepository:
             (int(tradable), item_id),
         )
         await self.db.commit()
+
+
+def _normalize_item_value(key: str, value: Any) -> Any:
+    if key in FLAG_FIELDS:
+        return int(bool(value))
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class OfferRepository:
@@ -272,6 +471,20 @@ class OfferRepository:
         await self.db.commit()
 
 
+TRADE_SELECT = """
+    SELECT t.*,
+           b.username AS buyer_username,
+           s.username AS seller_username,
+           b.steam_trade_url AS buyer_trade_url,
+           s.steam_trade_url AS seller_trade_url,
+           b.rating AS buyer_rating,
+           s.rating AS seller_rating
+    FROM trades t
+    JOIN users b ON t.buyer_id = b.id
+    JOIN users s ON t.seller_id = s.id
+"""
+
+
 class TradeRepository:
     def __init__(self, db: Database):
         self.db = db
@@ -293,34 +506,48 @@ class TradeRepository:
         return cur.lastrowid
 
     async def get_by_id(self, trade_id: int) -> Optional[Dict[str, Any]]:
-        cur = await self.db.execute(
-            """
-            SELECT t.*, b.username as buyer_username, s.username as seller_username
-            FROM trades t
-            JOIN users b ON t.buyer_id = b.id
-            JOIN users s ON t.seller_id = s.id
-            WHERE t.id = ?
-            """,
-            (trade_id,),
-        )
+        cur = await self.db.execute(f"{TRADE_SELECT} WHERE t.id = ?", (trade_id,))
         row = await cur.fetchone()
         return dict(row) if row else None
 
     async def get_by_user(self, user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
         cur = await self.db.execute(
-            """
-            SELECT t.*, b.username as buyer_username, s.username as seller_username
-            FROM trades t
-            JOIN users b ON t.buyer_id = b.id
-            JOIN users s ON t.seller_id = s.id
-            WHERE t.buyer_id = ? OR t.seller_id = ?
-            ORDER BY t.created_at DESC
-            LIMIT ?
-            """,
+            f"{TRADE_SELECT} WHERE t.buyer_id = ? OR t.seller_id = ? "
+            "ORDER BY t.created_at DESC LIMIT ?",
             (user_id, user_id, limit),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+    async def set_confirmed(self, trade_id: int, role: str, confirmed: bool = True) -> None:
+        """Отметить подтверждение одной из сторон (buyer/seller)."""
+        column = "buyer_confirmed_at" if role == "buyer" else "seller_confirmed_at"
+        value = "datetime('now')" if confirmed else "NULL"
+        await self.db.execute(
+            f"UPDATE trades SET {column} = {value}, updated_at = datetime('now') WHERE id = ?",
+            (trade_id,),
+        )
+        await self.db.commit()
+
+    async def set_completed_side(self, trade_id: int, role: str) -> None:
+        """Отметить, что сторона получила скины."""
+        column = "buyer_completed_at" if role == "buyer" else "seller_completed_at"
+        await self.db.execute(
+            f"UPDATE trades SET {column} = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+            (trade_id,),
+        )
+        await self.db.commit()
+
+    async def mark_completed(self, trade_id: int) -> None:
+        await self.db.execute(
+            """
+            UPDATE trades
+            SET status = 'completed', completed_at = datetime('now'), updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (trade_id,),
+        )
+        await self.db.commit()
 
     async def update_status(self, trade_id: int, status: str) -> None:
         await self.db.execute(
@@ -388,6 +615,13 @@ class RatingRepository:
         )
         await self.db.commit()
         return cur.lastrowid
+
+    async def exists(self, trade_id: int, from_user_id: int) -> bool:
+        cur = await self.db.execute(
+            "SELECT 1 FROM ratings WHERE trade_id = ? AND from_user_id = ?",
+            (trade_id, from_user_id),
+        )
+        return await cur.fetchone() is not None
 
     async def get_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         cur = await self.db.execute(
