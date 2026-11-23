@@ -1,0 +1,81 @@
+name: Deploy to VPS
+
+# Запуск вручную: автодеплой включим, когда в репозитории появятся
+# секреты VPS_HOST, VPS_USER, VPS_SSH_KEY, VPS_PORT, BOT_TOKEN,
+# ADMIN_IDS, STEAM_API_KEY, WEB_ADMIN_TOKEN.
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          load: true
+          tags: cs2-skin-trade-bot:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image to tar
+        run: docker save cs2-skin-trade-bot:latest | gzip > cs2-bot.tar.gz
+
+      - name: Copy image to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          source: "cs2-bot.tar.gz"
+          target: "~/cs2-bot/"
+
+      - name: Load and run on VPS
+        uses: appleboy/ssh-action@v1
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          WEB_ADMIN_TOKEN: ${{ secrets.WEB_ADMIN_TOKEN }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          envs: BOT_TOKEN,ADMIN_IDS,STEAM_API_KEY,WEB_ADMIN_TOKEN
+          script: |
+            set -eu
+            cd ~/cs2-bot
+            mkdir -p data
+
+            # Секреты не попадают в командную строку docker run
+            umask 077
+            cat > bot.env <<EOF
+            BOT_TOKEN=${BOT_TOKEN}
+            ADMIN_IDS=${ADMIN_IDS}
+            STEAM_API_KEY=${STEAM_API_KEY}
+            WEB_ADMIN_TOKEN=${WEB_ADMIN_TOKEN}
+            DB_PATH=/app/data/bot.db
+            WEB_APP_URL=http://${{ secrets.VPS_HOST }}:8080
+            EOF
+
+            docker load < cs2-bot.tar.gz
+            docker stop cs2-bot 2>/dev/null || true
+            docker rm cs2-bot 2>/dev/null || true
+            docker run -d \
+              --name cs2-bot \
+              --restart unless-stopped \
+              -p 8080:8080 \
+              -v ~/cs2-bot/data:/app/data \
+              --env-file ~/cs2-bot/bot.env \
+              cs2-skin-trade-bot:latest
+            docker system prune -f

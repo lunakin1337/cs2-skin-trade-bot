@@ -1,0 +1,45 @@
+name: Bot Live
+
+# Бесплатный хостинг поллинга на раннерах GitHub: job живёт ~5ч45м,
+# следующий запуск поднимает бота снова. Пропущенные апдейты Telegram
+# додержит 24 часа, поэтому паузы не теряются.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "10 */6 * * *"
+
+concurrency:
+  group: bot-live
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Restore database
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: bot-db-${{ github.run_id }}
+          restore-keys: |
+            bot-db-
+
+      - name: Run bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          WEB_APP_URL: ${{ secrets.WEB_APP_URL }}
+          DB_PATH: data/bot.db
+        run: python -m src.bot.main
