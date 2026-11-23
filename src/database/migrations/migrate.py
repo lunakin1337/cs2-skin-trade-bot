@@ -81,6 +81,9 @@ async def rollback_migration(db: Database, name: str) -> bool:
 
 async def init_database(db_path: str) -> Database:
     """Открыть соединение и довести схему до последней версии."""
+    parent = Path(db_path).expanduser().parent
+    parent.mkdir(parents=True, exist_ok=True)
+
     db = Database(db_path)
     await db.connect()
     await run_migrations(db)
