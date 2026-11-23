@@ -35,6 +35,12 @@ jobs:
           restore-keys: |
             bot-db-
 
+      - name: Проверка токена
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getMe" |             python -c "import json,sys; d=json.load(sys.stdin); print('bot:', d['result']['username']) if d.get('ok') else sys.exit('токен не принят: %s' % d.get('description'))"
+
       - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
