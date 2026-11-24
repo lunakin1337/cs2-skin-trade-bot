@@ -756,6 +756,13 @@
     return typeof value === "number" && value > 0 ? "$" + value.toFixed(2) : null;
   }
 
+  // инвентарь отдаёт цену числом, каталог — готовой строкой Steam («$1.20»)
+  function priceLabel(value) {
+    if (typeof value === "number") return money(value);
+    const text = String(value == null ? "" : value).trim();
+    return text || null;
+  }
+
   function authData() {
     if (tg && tg.initData) return tg.initData;
     return new URLSearchParams(location.search).get("initData") || "";
@@ -826,9 +833,9 @@
     });
     const prefersDark = typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches;
-    // ?theme=dark|light — только для локального предпросмотра вне Telegram
-    const forced = tg ? null : new URLSearchParams(location.search).get("theme");
-    const scheme = (tg && tg.colorScheme) || forced || (prefersDark ? "dark" : "light");
+    // ?theme=dark|light перекрывает выбор темы — удобно для локального предпросмотра
+    const forced = new URLSearchParams(location.search).get("theme");
+    const scheme = forced || (tg && tg.colorScheme) || (prefersDark ? "dark" : "light");
     root.setAttribute("data-theme", scheme === "dark" ? "dark" : "light");
   }
 
@@ -1058,7 +1065,7 @@
   }
 
   function catalogCard(item) {
-    const price = money(item.price);
+    const price = priceLabel(item.price);
     const tone = rarityTone(item.rarity);
     const badges = [];
     if (item.rarity) badges.push('<span class="badge rar">' + esc(item.rarity) + "</span>");
@@ -1201,7 +1208,7 @@
 
   function offeredRow(item) {
     const tone = rarityTone(item.rarity);
-    const price = money(item.price);
+    const price = priceLabel(item.price);
     return '<div class="sub r-' + tone + '"><span class="badge rar">' + esc(item.rarity || "скин") + "</span> " +
       esc(item.short || item.name) + (price ? " · " + price : "") + "</div>";
   }
