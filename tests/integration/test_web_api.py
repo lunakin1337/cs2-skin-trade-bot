@@ -9,6 +9,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.services import inventory_sync
 from bot.utils.steam import SteamInventory, SteamItem
 from bot.utils.telegram_auth import build_init_data
+from catalog_cache import bump_catalog_version
 from config.settings import BotConfig
 from web_app import create_app
 from webapp_context import REPOS_KEY
@@ -383,6 +384,128 @@ class TestCatalogApi:
         assert first["pages"] == 3
         assert len(first["items"]) == 3
         assert {item["name"] for item in first["items"]}.isdisjoint({item["name"] for item in second["items"]})
+
+
+class TestCatalogCache:
+    async def _seed(self, repos, name="AK-47 | Redline (Field-Tested)"):
+        await repos.skins.upsert_many([{"market_hash_name": name, "category": "rifles"}])
+
+    async def test_response_carries_etag(self, client):
+        await self._seed(client.app[REPOS_KEY])
+
+        response = await client.get("/api/catalog/tree", headers=auth_headers())
+
+        assert response.status == 200
+        assert response.headers["ETag"].startswith('"')
+        assert "max-age" in response.headers["Cache-Control"]
+
+    async def test_if_none_match_returns_304(self, client):
+        await self._seed(client.app[REPOS_KEY])
+        first = await client.get("/api/catalog/tree", headers=auth_headers())
+        etag = first.headers["ETag"]
+
+        second = await client.get(
+            "/api/catalog/tree",
+            headers={**auth_headers(), "If-None-Match": etag},
+        )
+
+        assert second.status == 304
+        assert await second.text() == ""
+
+    async def test_cached_body_ignores_new_rows_until_version_bump(self, client):
+        repos = client.app[REPOS_KEY]
+        await self._seed(repos)
+
+        first = await (await client.get("/api/catalog/tree", headers=auth_headers())).json()
+        assert first["total"] == 1
+
+        await self._seed(repos, name="AWP | Asiimov (Field-Tested)")
+        cached = await (await client.get("/api/catalog/tree", headers=auth_headers())).json()
+        assert cached["total"] == 1
+
+        await bump_catalog_version(repos)
+        fresh = await (await client.get("/api/catalog/tree", headers=auth_headers())).json()
+        assert fresh["total"] == 2
+
+    async def test_items_page_cached_per_filters(self, client):
+        repos = client.app[REPOS_KEY]
+        await self._seed(repos)
+
+        rifles = await client.get("/api/catalog/items?category=rifles", headers=auth_headers())
+        knives = await client.get("/api/catalog/items?category=knives", headers=auth_headers())
+
+        assert rifles.headers["ETag"] != knives.headers["ETag"]
+        assert (await knives.json())["total"] == 0
+
+    async def test_zero_ttl_disables_cache(self, tmp_path):
+        app = create_app(
+            config=BotConfig(token=TOKEN, web_admin_token="secret", web_cache_ttl=0),
+            db_path=str(tmp_path / "nocache.db"),
+        )
+        async with TestClient(TestServer(app)) as client:
+            repos = client.app[REPOS_KEY]
+            await self._seed(repos)
+            await (await client.get("/api/catalog/tree", headers=auth_headers())).json()
+
+            await self._seed(repos, name="AWP | Asiimov (Field-Tested)")
+            fresh = await (await client.get("/api/catalog/tree", headers=auth_headers())).json()
+
+            assert fresh["total"] == 2
+
+    async def test_inventory_sync_invalidates_catalog_cache(self, client, monkeypatch):
+        repos = client.app[REPOS_KEY]
+        user = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        await repos.users.link_steam(
+            user["id"],
+            "76561198000000000",
+            "https://steamcommunity.com/tradeoffer/new/?partner=7&token=abc",
+            trade_partner="7",
+            trade_token="abc",
+        )
+        before = await (await client.get("/api/catalog/tree", headers=auth_headers())).json()
+        assert before["total"] == 0
+
+        class FakeSteam:
+            async def fetch_inventory(self, steam_id, language="russian"):
+                return SteamInventory(
+                    steam_id=steam_id,
+                    items=[
+                        SteamItem(
+                            asset_id="900",
+                            class_id="1",
+                            instance_id="0",
+                            market_hash_name="M4A1-S | Printstream",
+                            tradable=True,
+                        )
+                    ],
+                )
+
+        class FakePrices:
+            async def fetch_prices(self, names, limit=20):
+                return {}
+
+        monkeypatch.setattr(inventory_sync, "get_steam_client", lambda key="": FakeSteam())
+        monkeypatch.setattr(inventory_sync, "get_price_fetcher", lambda: FakePrices())
+
+        assert (await client.post("/api/inventory/sync", headers=auth_headers())).status == 200
+
+        after = await (await client.get("/api/catalog/tree", headers=auth_headers())).json()
+        assert after["total"] == 1
+
+    async def test_catalog_items_include_rarity(self, client):
+        repos = client.app[REPOS_KEY]
+        user = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        await repos.items.add(
+            owner_id=user["id"],
+            steam_asset_id="555",
+            market_hash_name="AWP | Asiimov (Field-Tested)",
+            rarity="Засекреченное",
+        )
+        await self._seed(repos, name="AWP | Asiimov (Field-Tested)")
+
+        data = await (await client.get("/api/catalog/items?q=Asiimov", headers=auth_headers())).json()
+
+        assert data["items"][0]["rarity"] == "Засекреченное"
 
 
 class TestCounterOffers:

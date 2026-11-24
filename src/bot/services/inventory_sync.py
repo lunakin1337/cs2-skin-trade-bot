@@ -6,6 +6,7 @@ from typing import Optional
 from bot.utils.prices import get_price_fetcher
 from bot.utils.skin_categories import classify
 from bot.utils.steam import SteamClient, SteamInventory, get_steam_client
+from catalog_cache import bump_catalog_version
 from config.settings import BotConfig
 from database.repository import Repositories
 
@@ -85,6 +86,8 @@ async def sync_inventory(
         ]
     )
     await repos.users.touch_inventory_sync(user["id"])
+    # инвентарь подмешивает скины в каталог — сбрасываем кэш ответов Mini App
+    await bump_catalog_version(repos)
 
     return {
         "ok": True,

@@ -3,6 +3,7 @@
 from aiogram import Bot
 from aiohttp import web
 
+from catalog_cache import CatalogCache
 from config.settings import BotConfig
 from database.repository import Repositories
 
@@ -11,3 +12,4 @@ REPOS_KEY: web.AppKey[Repositories] = web.AppKey("repos", Repositories)
 BOT_KEY: web.AppKey[Bot] = web.AppKey("bot", Bot)
 CONFIG_OVERRIDE_KEY: web.AppKey[object] = web.AppKey("config_override", object)
 DB_PATH_OVERRIDE_KEY: web.AppKey[object] = web.AppKey("db_path_override", object)
+CATALOG_CACHE_KEY: web.AppKey[CatalogCache] = web.AppKey("catalog_cache", CatalogCache)

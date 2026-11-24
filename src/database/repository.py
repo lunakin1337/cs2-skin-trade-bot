@@ -372,6 +372,23 @@ class ItemRepository:
         )
         return [dict(row) for row in await cur.fetchall()]
 
+    async def rarity_map(self, names: List[str]) -> Dict[str, str]:
+        """Редкость по имени скина — из инвентарей, где Steam её уже отдал."""
+        unique = [name for name in dict.fromkeys(names) if name]
+        if not unique:
+            return {}
+        placeholders = ", ".join("?" for _ in unique)
+        cur = await self.db.execute(
+            f"""
+            SELECT market_hash_name, MAX(rarity) AS rarity
+            FROM items
+            WHERE rarity IS NOT NULL AND market_hash_name IN ({placeholders})
+            GROUP BY market_hash_name
+            """,
+            tuple(unique),
+        )
+        return {row["market_hash_name"]: row["rarity"] for row in await cur.fetchall()}
+
     async def apply_prices(self, owner_id: int, prices: Dict[str, float]) -> None:
         """Записать цены Steam для всех предметов пользователя с этими именами."""
         for market_hash_name, price in prices.items():

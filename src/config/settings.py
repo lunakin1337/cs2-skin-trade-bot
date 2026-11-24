@@ -51,6 +51,7 @@ class BotConfig:
     web_admin_token: str = ""
     telegram_proxy: str = ""
     parse_mode: str = "HTML"
+    web_cache_ttl: int = 60
 
     @property
     def has_steam_api_key(self) -> bool:
@@ -58,6 +59,15 @@ class BotConfig:
 
     def is_admin(self, telegram_id: int | None) -> bool:
         return telegram_id is not None and telegram_id in self.admin_ids
+
+
+def _int_env(name: str, default: int) -> int:
+    """Целое из окружения: мусор и отрицательные значения дают дефолт."""
+    try:
+        value = int(os.getenv(name, "").strip())
+    except ValueError:
+        return default
+    return value if value >= 0 else default
 
 
 def load_config() -> BotConfig:
@@ -77,6 +87,7 @@ def load_config() -> BotConfig:
         web_app_url=os.getenv("WEB_APP_URL", "").strip(),
         web_admin_token=os.getenv("WEB_ADMIN_TOKEN", "").strip(),
         telegram_proxy=os.getenv("TELEGRAM_PROXY", "").strip(),
+        web_cache_ttl=_int_env("WEB_CACHE_TTL", 60),
     )
 
 

@@ -15,11 +15,13 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiohttp import web
 
 from bot.services.skin_query_llm import log_llm_status
+from catalog_cache import CatalogCache
 from config.settings import BotConfig, load_config, load_llm_config
 from database import Repositories, init_database
 from web_api import register_api_routes
 from webapp_context import (
     BOT_KEY,
+    CATALOG_CACHE_KEY,
     CONFIG_KEY,
     CONFIG_OVERRIDE_KEY,
     DB_PATH_OVERRIDE_KEY,
@@ -146,6 +148,7 @@ def create_app(
     app = web.Application()
     app[CONFIG_OVERRIDE_KEY] = config
     app[DB_PATH_OVERRIDE_KEY] = db_path
+    app[CATALOG_CACHE_KEY] = CatalogCache()
 
     app.router.add_get("/", mini_app)
     app.router.add_get("/app", mini_app)

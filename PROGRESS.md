@@ -19,7 +19,7 @@ Telegram Mini App.
 ## Стек и структура
 
 - aiogram 3.34, SQLite (aiosqlite), aiohttp; Python 3.11+
-- Тесты: pytest (151 зелёный), линт ruff; CI в GitHub Actions
+- Тесты: pytest (172 зелёных), линт ruff; CI в GitHub Actions
 - src-layout: пакеты `bot`, `config`, `database` из `src/`
 
 ```
@@ -42,6 +42,7 @@ src/
   webapp/app.html             сам Mini App (SPA на ванильном JS)
     services/disputes.py      споры: проверки, открытие, уведомления
   webapp_context.py           ключи состояния aiohttp (в т.ч. бот для уведомлений)
+  catalog_cache.py            кэш ответов каталога: TTL, ETag, версия каталога в settings
 scripts/refresh_webapp_url.py обновляет WEB_APP_URL по логу cloudflared
 scripts/cleanup_test_trades.py чистка мусорных тестовых сделок (dry-run / --apply)
 ```
@@ -130,6 +131,25 @@ StatTrak. `services/skin_search.py` ищет по шагам: с износом 
 проверяется HMAC-SHA256 от `BOT_TOKEN` (`utils/telegram_auth.py`), без подписи `/api/*`
 отвечает 401. Админка закрыта и в интерфейсе, и на сервере.
 
+**Оформление Mini App.** Всё инлайн, без CDN (кроме обязательного `telegram-web-app.js`).
+Палитра — CSS-переменные: фолбэки для светлой и тёмной темы в `:root` и
+`prefers-color-scheme`, а в Telegram значения перекрываются из `themeParams`
+(`bg_color`, `secondary_bg_color`, `text_color`, `hint_color`, `button_color`,
+`button_text_color`), событие `themeChanged` перекрашивает на лету. Карточки скинов красятся
+по редкости: полоса сверху и бейдж берут цвет из `items.rarity` (русские и английские
+названия редкостей, включая «★» и контрабанду). Инвентарь, каталог и доска при загрузке
+показывают скелетоны с шиммером (`prefers-reduced-motion` его отключает), а не текст
+«Загрузка…». Отступы и типографика — на токенах (`--sp-*`, `--fs-*`, `--r-*`).
+
+**Скорость Mini App.** `/api/catalog`, `/api/catalog/tree` и `/api/catalog/items` кэшируются
+в памяти веб-процесса (`catalog_cache.CatalogCache`) на `WEB_CACHE_TTL` секунд (по
+умолчанию 60, `0` — выключено) и отдают ETag: повторный запрос с `If-None-Match` получает
+304 без тела. Кэш живёт только в процессе, а корректность между процессами держит версия
+каталога в `settings.catalog_version`: её поднимают импорт каталога
+(`services/skin_catalog.py`) и синхронизация инвентаря (`services/inventory_sync.py`),
+поэтому бот или CLI-импорт сразу сбрасывают кэш веб-процесса. Клиент складывает
+загруженные страницы каталога в `Map` и на фоне предзагружает следующую.
+
 **API Mini App:** `/api/me`, `/api/profile/steam`, `/api/profile/refresh`, `/api/inventory`,
 `/api/inventory/sync`, `/api/catalog`, `/api/catalog/tree`, `/api/catalog/items`,
 `/api/offers` (GET доска, POST создание), `/api/my_offers`, `/api/offers/{id}/accept|cancel|
@@ -168,11 +188,16 @@ delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api
   спор всё равно открывается, но уведомления не уходят (в логе warning).
 - **id предмета** — это `items.id` из базы (не Steam asset id). Нумерация в интерфейсе
   отдельная, 1..N, и совпадает между `/inventory` и шагом выбора скинов.
+- **Кэш каталога живёт в памяти веб-процесса**, поэтому прямой `INSERT` в `skins` мимо
+  `import_catalog`/`sync_inventory` его не сбросит: писать в каталог только через сервисы
+  (они поднимают `settings.catalog_version`) либо ждать `WEB_CACHE_TTL`.
 
 ## Что осталось / идеи дальше
 
-1. Оформление Mini App: палитра, шрифты, карточки, скелетоны загрузки.
-2. Скорость: кэш ответов API и предзагрузка соседних страниц каталога.
+1. ~~Оформление Mini App~~ — палитра из `themeParams`, карточки с цветом по редкости,
+   скелетоны загрузки, единые отступы и типографика.
+2. ~~Скорость~~ — TTL-кэш каталога с ETag/304, версия каталога для инвалидации,
+   предзагрузка следующей страницы каталога на клиенте.
 3. ~~ИИ-разбор совсем странных запросов~~ — `services/skin_query_llm.py` как последний
    шаг `find_candidates`; включается ключом `LLM_API_KEY` в `.env`.
 4. Автоматическая отправка Steam Trade Offer из бота (нужна сессия Steam бота: cookies +
