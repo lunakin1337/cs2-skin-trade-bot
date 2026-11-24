@@ -185,6 +185,19 @@
     <div id="create-preview"></div>
   </section>
 
+  <section id="view-counter" hidden>
+    <div class="toolbar">
+      <div class="stat" id="counter-title">Встречное предложение</div>
+      <button class="ghost" id="counter-back">← Назад к доске</button>
+    </div>
+    <div class="field"><span>Выберите скины из своего инвентаря, которые отдаёте</span></div>
+    <div id="counter-items"></div>
+    <div class="toolbar">
+      <div class="stat" id="counter-picked">Выбрано: 0</div>
+      <button class="action" id="counter-send">🤝 Отправить предложение</button>
+    </div>
+  </section>
+
   <section id="view-mine" hidden>
     <div class="toolbar"><div class="stat" id="mine-stat"></div></div>
     <div id="mine-list"></div>
@@ -258,6 +271,7 @@
     inventoryItems: [],
     catalog: { category: null, weapon: null, query: "", page: 0, pages: 1 },
     catalogTree: null,
+    counter: { offerId: null, picked: new Set() },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -534,6 +548,62 @@
     switchTab("create");
   });
 
+
+  // ---------- встречное предложение ----------
+
+  async function openCounter(offerId) {
+    state.counter = { offerId: Number(offerId), picked: new Set() };
+    $("counter-title").textContent = "Предложение по обмену #" + offerId;
+    await switchTab("counter");
+  }
+
+  async function loadCounter() {
+    const container = $("counter-items");
+    state_(container, "Загружаю инвентарь…");
+
+    const data = await api("/api/inventory?page=0&size=50");
+    const items = data.items.filter((item) => item.tradable);
+    if (!items.length) {
+      state_(container, "Нет торгуемых скинов — синхронизируйте инвентарь.");
+      return;
+    }
+    container.innerHTML = '<div class="grid">' + items.map((item) => itemCard(item, { pickable: true })).join("") + "</div>";
+    updateCounterLabel();
+  }
+
+  function updateCounterLabel() {
+    $("counter-picked").textContent = "Выбрано: " + state.counter.picked.size;
+  }
+
+  $("counter-items").addEventListener("click", (event) => {
+    const card = event.target.closest("[data-item]");
+    if (!card) return;
+    const itemId = Number(card.getAttribute("data-item"));
+    if (state.counter.picked.has(itemId)) state.counter.picked.delete(itemId);
+    else state.counter.picked.add(itemId);
+    card.classList.toggle("picked", state.counter.picked.has(itemId));
+    updateCounterLabel();
+  });
+
+  $("counter-back").addEventListener("click", () => switchTab("board"));
+
+  $("counter-send").addEventListener("click", async () => {
+    if (!state.counter.offerId) return;
+    if (!state.counter.picked.size) { notice("Выберите хотя бы один свой скин", "error"); return; }
+
+    try {
+      const result = await api("/api/offers/" + state.counter.offerId + "/accept", {
+        method: "POST",
+        body: { item_ids: Array.from(state.counter.picked) },
+      });
+      notice("Предложение отправлено (#" + result.trade_id + "). Ждём подтверждения автора объявления.", "ok");
+      await loadTrades();
+      await switchTab("trades");
+    } catch (error) {
+      fail(error);
+    }
+  });
+
   // ---------- доска ----------
 
   function offerCard(offer, options) {
@@ -545,7 +615,8 @@
 
     const actions = [];
     if (opts.acceptable && !offer.own) {
-      actions.push('<button class="action" data-accept="' + offer.id + '">🤝 Принять</button>');
+      actions.push('<button class="action" data-counter="' + offer.id + '">🤝 Предложить обмен</button>');
+      actions.push('<button class="ghost" data-accept="' + offer.id + '">Забрать без своих скинов</button>');
     }
     if (opts.mine) {
       if (offer.status === "active") actions.push('<button class="ghost" data-cancel="' + offer.id + '">⏸ Снять</button>');
@@ -590,6 +661,12 @@
   $("board-next").addEventListener("click", () => loadBoard(state.boardPage + 1).catch(fail));
 
   $("board-list").addEventListener("click", async (event) => {
+    const counterButton = event.target.closest("[data-counter]");
+    if (counterButton) {
+      await openCounter(counterButton.getAttribute("data-counter"));
+      return;
+    }
+
     const button = event.target.closest("[data-accept]");
     if (!button) return;
     const offerId = button.getAttribute("data-accept");
@@ -746,8 +823,9 @@
       }
     });
 
-    const link = trade.counterpart_url
-      ? '<div class="actions"><a class="ghost" href="' + esc(trade.counterpart_url) + '" target="_blank">🔗 Обмен в Steam</a></div>'
+    const steamLink = trade.steam_url || trade.counterpart_url;
+    const link = steamLink
+      ? '<div class="actions"><a class="ghost" href="' + esc(steamLink) + '" target="_blank">🔗 Steam Trade</a></div>'
       : "";
 
     return '<div class="row"><div class="head"><b>#' + trade.id + "</b><span class=\"sub\">" +
@@ -756,6 +834,12 @@
       " · контрагент " + esc(trade.counterpart) + "</div>" +
       '<div class="sub">Подтверждение: ' + (trade.confirmed ? "✅" : "⏳") +
       " · получение: " + (trade.received ? "✅" : "⏳") + "</div>" +
+      (trade.my_items && trade.my_items.length
+        ? '<div class="sub">Отдаёте: ' + trade.my_items.map((item) => esc(item.name)).join(", ") + "</div>"
+        : "") +
+      (trade.their_items && trade.their_items.length
+        ? '<div class="sub">Получаете: ' + trade.their_items.map((item) => esc(item.name)).join(", ") + "</div>"
+        : "") +
       link +
       (actions.length ? '<div class="actions">' + actions.join("") + "</div>" : "") +
       "</div>";
@@ -766,10 +850,23 @@
     state_(list, "Загружаю сделки…");
     const data = await api("/api/trades");
     if (!data.items.length) {
-      state_(list, "Сделок пока нет. Примите объявление на доске.");
+      state_(list, "Сделок пока нет. Предложите обмен на доске.");
       return;
     }
-    list.innerHTML = data.items.map(tradeRow).join("");
+
+    const incoming = data.items.filter((trade) => trade.direction === "incoming");
+    const outgoing = data.items.filter((trade) => trade.direction !== "incoming");
+
+    const blocks = [];
+    if (incoming.length) {
+      blocks.push('<div class="toolbar"><b>📥 Входящие предложения</b></div>');
+      blocks.push(incoming.map(tradeRow).join(""));
+    }
+    if (outgoing.length) {
+      blocks.push('<div class="toolbar"><b>📤 Мои предложения по обмену</b></div>');
+      blocks.push(outgoing.map(tradeRow).join(""));
+    }
+    list.innerHTML = blocks.join("");
   }
 
   $("trades-list").addEventListener("click", async (event) => {
@@ -909,6 +1006,7 @@
 
   const loaders = {
     inventory: () => loadInventory(state.invPage),
+    counter: loadCounter,
     catalog: loadCatalog,
     board: () => loadBoard(state.boardPage),
     create: async () => { await loadInventory(0); renderCreateItems(); },

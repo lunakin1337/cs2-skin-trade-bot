@@ -82,15 +82,18 @@ async def cb_accept_offer(callback: CallbackQuery, repos: Repositories) -> None:
             from_user_id=offer["creator_id"],
             to_user_id=user["id"],
         )
+    # инициатор подтверждает сразу — ждём только автора объявления
+    await repos.trades.set_confirmed(trade_id, "buyer")
     await repos.offers.update_status(offer_id, "in_trade")
 
     text, markup = await render_trades(repos, callback.from_user.id)
     await edit_or_send(
         callback.message,
-        f"✅ Сделка <b>#{trade_id}</b> создана — подтвердите её.\n\n{text}",
+        f"✅ Предложение по обмену <b>#{trade_id}</b> отправлено.\n"
+        "Ваше подтверждение уже учтено — ждём автора объявления.\n\n" + text,
         markup,
     )
-    await notify(callback, f"Сделка #{trade_id} создана")
+    await notify(callback, f"Предложение #{trade_id} отправлено")
 
 
 @router.callback_query(F.data.startswith("trade_confirm_"))

@@ -383,3 +383,80 @@ class TestCatalogApi:
         assert first["pages"] == 3
         assert len(first["items"]) == 3
         assert {item["name"] for item in first["items"]}.isdisjoint({item["name"] for item in second["items"]})
+
+
+class TestCounterOffers:
+    async def _prepare(self, client):
+        repos = client.app[REPOS_KEY]
+        seller = await repos.users.create_or_update(telegram_id=999000111, username="seller")
+        buyer = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        for participant in (seller, buyer):
+            await repos.users.link_steam(
+                participant["id"],
+                "76561198000000000",
+                "https://steamcommunity.com/tradeoffer/new/?partner=1&token=abcd",
+                trade_partner="1",
+                trade_token="abcd",
+            )
+
+        seller_item = await repos.items.add(
+            owner_id=seller["id"], steam_asset_id="asset-seller", market_hash_name="★ Karambit | Doppler",
+            price_steam=1500.0,
+        )
+        buyer_item = await repos.items.add(
+            owner_id=buyer["id"], steam_asset_id="asset-buyer", market_hash_name="AWP | Asiimov",
+            price_steam=120.0,
+        )
+        offer_id = await repos.offers.create(
+            creator_id=seller["id"], title="Нож", items_offered=[seller_item], items_wanted="AWP"
+        )
+        return seller, buyer, seller_item, buyer_item, offer_id
+
+    async def test_counter_auto_confirms_initiator(self, client):
+        seller, buyer, seller_item, buyer_item, offer_id = await self._prepare(client)
+
+        response = await client.post(
+            f"/api/offers/{offer_id}/accept",
+            headers=auth_headers(),
+            json={"item_ids": [buyer_item]},
+        )
+        data = await response.json()
+
+        assert response.status == 200
+        trade = await client.app[REPOS_KEY].trades.get_by_id(data["trade_id"])
+        assert trade["buyer_confirmed_at"] is not None
+        assert trade["seller_confirmed_at"] is None
+        assert trade["status"] == "pending"
+
+    async def test_trade_payload_has_items_and_steam_url(self, client):
+        seller, buyer, seller_item, buyer_item, offer_id = await self._prepare(client)
+
+        created = await client.post(
+            f"/api/offers/{offer_id}/accept",
+            headers=auth_headers(),
+            json={"item_ids": [buyer_item]},
+        )
+        trade_id = (await created.json())["trade_id"]
+
+        seller_view = await (await client.get("/api/trades", headers=auth_headers(999000111))).json()
+        trade = seller_view["items"][0]
+
+        assert trade["direction"] == "incoming"
+        assert [item["name"] for item in trade["my_items"]] == ["★ Karambit | Doppler"]
+        assert [item["name"] for item in trade["their_items"]] == ["AWP | Asiimov"]
+        assert "items=" in trade["steam_url"]
+        assert "asset-seller" in trade["steam_url"]
+
+        await client.post(f"/api/trades/{trade_id}/confirm", headers=auth_headers(999000111))
+        seller_view = await (await client.get("/api/trades", headers=auth_headers(999000111))).json()
+        assert seller_view["items"][0]["status"] == "in_escrow"
+
+    async def test_counter_rejects_foreign_items(self, client):
+        seller, buyer, seller_item, buyer_item, offer_id = await self._prepare(client)
+
+        response = await client.post(
+            f"/api/offers/{offer_id}/accept",
+            headers=auth_headers(),
+            json={"item_ids": [seller_item]},
+        )
+        assert response.status == 400

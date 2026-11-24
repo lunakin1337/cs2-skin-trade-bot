@@ -158,11 +158,11 @@ def trades_keyboard(trades: Iterable[dict], viewer_id: int) -> InlineKeyboardMar
             )
 
         if status == "in_escrow":
-            counterpart_url = trade.get(
-                "seller_trade_url" if role == "buyer" else "buyer_trade_url"
-            )
-            if counterpart_url:
-                rows.append([InlineKeyboardButton(text=f"🔗 Обмен #{trade_id}", url=counterpart_url)])
+            steam_url = trade.get("steam_url")
+            if steam_url:
+                rows.append(
+                    [InlineKeyboardButton(text=f"🔗 Steam Trade #{trade_id}", url=steam_url)]
+                )
             if not trade.get(f"{role}_completed_at"):
                 rows.append(
                     [

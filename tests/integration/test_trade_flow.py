@@ -181,7 +181,7 @@ class TestAcceptOffer:
         trades = await repos.trades.get_by_user(buyer["id"])
         assert len(trades) == 1
         assert trades[0]["seller_id"] == seller["id"]
-        assert "сделка" in last_text(session)
+        assert "предложение по обмену" in last_text(session)
 
         offer = await repos.offers.get_by_id(offer_id)
         assert offer["status"] == "in_trade"

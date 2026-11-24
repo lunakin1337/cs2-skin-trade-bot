@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from bot.keyboards.inline import back_to_main_keyboard, trades_keyboard
+from bot.services.trades import trade_payload
 from bot.utils.formatters import format_trade
 from bot.utils.telegram import edit_or_send, notify
 from bot.utils.users import ensure_user
@@ -29,8 +30,27 @@ async def render_trades(repos: Repositories, telegram_id: int) -> tuple[str, Inl
     if not trades:
         return EMPTY_TEXT, back_to_main_keyboard()
 
-    blocks = [format_trade(trade, user["id"]) for trade in trades]
-    return "\n\n".join(["🔄 <b>Ваши сделки</b>", *blocks]), trades_keyboard(trades, user["id"])
+    incoming: list[tuple[dict, str]] = []
+    outgoing: list[tuple[dict, str]] = []
+
+    for trade in trades:
+        payload = await trade_payload(repos, trade, user["id"])
+        trade.update(payload)
+        block = format_trade(trade, user["id"])
+        if payload["direction"] == "incoming":
+            incoming.append((trade, block))
+        else:
+            outgoing.append((trade, block))
+
+    blocks: list[str] = []
+    if incoming:
+        blocks.append("📥 <b>Входящие предложения</b>")
+        blocks.extend(block for _, block in incoming)
+    if outgoing:
+        blocks.append("📤 <b>Мои предложения по обмену</b>")
+        blocks.extend(block for _, block in outgoing)
+
+    return "\n\n".join(["🔄 <b>Сделки</b>", *blocks]), trades_keyboard(trades, user["id"])
 
 
 @router.message(Command("trades"))

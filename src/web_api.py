@@ -8,6 +8,7 @@ from aiohttp import web
 
 from bot.services.inventory_sync import sync_inventory
 from bot.services.skin_search import find_candidates
+from bot.services.trades import trade_payload
 from bot.utils.formatters import TRADE_STATUS_LABELS, format_author, short_name, wear_abbr
 from bot.utils.skin_categories import CATEGORY_ORDER, category_title
 from bot.utils.steam import TradeUrl, get_steam_client, SteamError, parse_trade_url
@@ -489,6 +490,24 @@ async def _offer_action(request: web.Request, action: str) -> web.Response:
         if not user.get("steam_trade_url"):
             return web.json_response({"error": "Сначала укажите Trade URL в профиле"}, status=400)
 
+        body = await _body(request)
+        try:
+            my_item_ids = [int(item_id) for item_id in body.get("item_ids") or []][:10]
+        except (TypeError, ValueError):
+            return web.json_response({"error": "Некорректный список предметов"}, status=400)
+
+        if my_item_ids:
+            mine = await repos.items.get_by_ids(my_item_ids)
+            blocked = [
+                item for item in mine
+                if item["owner_id"] != user["id"] or not item.get("is_tradable")
+            ]
+            if blocked or len(mine) != len(my_item_ids):
+                return web.json_response(
+                    {"error": "Часть предметов недоступна для обмена — обновите инвентарь"},
+                    status=400,
+                )
+
         trade_id = await repos.trades.create(
             buyer_id=user["id"], seller_id=offer["creator_id"], offer_id=offer_id
         )
@@ -499,8 +518,18 @@ async def _offer_action(request: web.Request, action: str) -> web.Response:
                 from_user_id=offer["creator_id"],
                 to_user_id=user["id"],
             )
+        for item_id in my_item_ids:
+            await repos.trade_items.add(
+                trade_id=trade_id,
+                item_id=item_id,
+                from_user_id=user["id"],
+                to_user_id=offer["creator_id"],
+            )
+
+        # инициатор подтверждает сделку в момент отправки предложения
+        await repos.trades.set_confirmed(trade_id, "buyer")
         await repos.offers.update_status(offer_id, "in_trade")
-        return web.json_response({"ok": True, "trade_id": trade_id})
+        return web.json_response({"ok": True, "trade_id": trade_id, "status": "pending"})
 
     if offer["creator_id"] != user["id"]:
         return web.json_response({"error": "Это не ваше предложение"}, status=403)
@@ -554,8 +583,16 @@ async def api_trades(request: web.Request) -> web.Response:
     if user is None:
         return _unauthorized()
 
-    trades = await _repos(request).trades.get_by_user(user["id"], limit=20)
-    return web.json_response({"items": [_trade_json(trade, user["id"]) for trade in trades]})
+    repos = _repos(request)
+    trades = await repos.trades.get_by_user(user["id"], limit=20)
+
+    items = []
+    for trade in trades:
+        payload = _trade_json(trade, user["id"])
+        payload.update(await trade_payload(repos, trade, user["id"]))
+        items.append(payload)
+
+    return web.json_response({"items": items})
 
 
 async def api_trade_action(request: web.Request) -> web.Response:

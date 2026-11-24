@@ -184,6 +184,16 @@ def format_trade(trade: dict, viewer_id: int) -> str:
     if trade["status"] in {"in_escrow", "completed"}:
         received = "✅" if trade.get(f"{role}_completed_at") else "⏳"
         lines.append(f"   Скины получены: {received}")
+
+    my_items = trade.get("my_items") or []
+    their_items = trade.get("their_items") or []
+    if my_items:
+        names = ", ".join(short_name(item["name"], 26) for item in my_items[:3])
+        lines.append(f"   Отдаёте: {names}")
+    if their_items:
+        names = ", ".join(short_name(item["name"], 26) for item in their_items[:3])
+        lines.append(f"   Получаете: {names}")
+
     return "\n".join(lines)
 
 
