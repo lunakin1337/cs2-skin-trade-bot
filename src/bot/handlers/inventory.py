@@ -81,8 +81,8 @@ async def _inventory_view(
         lines.append(f"🔄 Обновлён: {user['inventory_synced_at']} UTC")
     lines.append("")
 
-    for item in items:
-        lines.append(format_item(item, index=item["id"]))
+    for offset, item in enumerate(items):
+        lines.append(format_item(item, index=page * PAGE_SIZE + offset + 1))
 
     return "\n".join(lines), inventory_keyboard(has_steam, page=page, pages=pages)
 

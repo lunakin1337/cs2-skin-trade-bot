@@ -85,21 +85,35 @@ async def process_offer_description(
     await state.set_state(TradeStates.waiting_items_offered)
 
     user = await ensure_user(repos, message.from_user)
-    items = await repos.items.get_by_owner(user["id"], tradable_only=True, limit=OFFER_LIST_LIMIT)
+    all_items = await repos.items.get_by_owner(user["id"])
 
-    if not items:
+    numbered = [
+        (position, item)
+        for position, item in enumerate(all_items, start=1)
+        if item.get("is_tradable")
+    ]
+    if not numbered:
         await state.clear()
         await message.answer("❌ Торгуемых предметов нет.", reply_markup=back_to_main_keyboard())
         return
 
+    # Номера совпадают с порядком в /inventory, а id остаётся скрытым в состоянии
+    await state.update_data(item_map={str(position): item["id"] for position, item in numbered})
+
+    shown = numbered[:OFFER_LIST_LIMIT]
     lines = [
         "Шаг 3/4: выберите скины, которые отдаёте.",
-        f"Отправьте ID через запятую (до {MAX_OFFER_ITEMS}), например: <code>1, 5, 12</code>.",
+        f"Отправьте номера через запятую (до {MAX_OFFER_ITEMS}), например: <code>1, 3</code>.",
+        "Нумерация совпадает с /inventory.",
         "",
         "<b>Торгуемые предметы:</b>",
     ]
-    lines.extend(format_item(item, index=item["id"]) for item in items)
-    lines.append("\nПолный список — в /inventory.")
+    lines.extend(format_item(item, index=position) for position, item in shown)
+
+    if len(numbered) > len(shown):
+        lines.append(f"\n... и ещё {len(numbered) - len(shown)} — смотрите /inventory.")
+    else:
+        lines.append("\nПолный список — в /inventory.")
 
     await message.answer("\n".join(lines))
 
@@ -112,23 +126,32 @@ async def process_items_offered(
 ) -> None:
     raw = (message.text or "").replace(" ", "")
     try:
-        item_ids = [int(part) for part in raw.split(",") if part]
+        numbers = list(dict.fromkeys(int(part) for part in raw.split(",") if part))
     except ValueError:
-        await message.answer("❌ Нужны числовые ID через запятую.")
+        await message.answer("❌ Нужны числа через запятую, например: 1, 3")
         return
 
-    if not 1 <= len(item_ids) <= MAX_OFFER_ITEMS:
+    if not 1 <= len(numbers) <= MAX_OFFER_ITEMS:
         await message.answer(f"❌ Укажите от 1 до {MAX_OFFER_ITEMS} предметов.")
         return
 
+    data = await state.get_data()
+    item_map = data.get("item_map") or {}
+    unknown = [number for number in numbers if str(number) not in item_map]
+    if unknown:
+        await message.answer(f"❌ Номеров {unknown} нет в списке. Начните заново: /create_offer")
+        return
+
+    item_ids = [item_map[str(number)] for number in numbers]
     user = await ensure_user(repos, message.from_user)
     owned = await repos.items.get_by_owner(user["id"], tradable_only=True)
     owned_ids = {item["id"] for item in owned}
 
-    invalid = [item_id for item_id in item_ids if item_id not in owned_ids]
-    if invalid:
+    unavailable = [number for number, item_id in zip(numbers, item_ids) if item_id not in owned_ids]
+    if unavailable:
         await message.answer(
-            f"❌ Предметы {invalid} не найдены среди торгуемых. Проверьте ID в /inventory."
+            f"❌ Предметы {unavailable} уже недоступны — проданы или на кулдауне. "
+            "Обновите список: /create_offer"
         )
         return
 

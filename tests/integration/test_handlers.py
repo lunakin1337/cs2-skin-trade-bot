@@ -165,3 +165,72 @@ class TestCreateOffer:
 
         assert "steam" in last_text(session)
         assert await state.get_state() is None
+
+
+    async def test_numbering_maps_to_hidden_ids(self, bot, repos, state, test_user):
+        from bot.handlers.create_offer import process_items_offered, process_offer_description
+
+        await repos.users.link_steam(
+            test_user["id"],
+            "76561198000000000",
+            "https://steamcommunity.com/tradeoffer/new/?partner=1&token=abcd",
+            trade_partner="1",
+            trade_token="abcd",
+        )
+        for index in range(3):
+            await repos.items.add(
+                owner_id=test_user["id"],
+                steam_asset_id=str(index),
+                market_hash_name=f"Skin {index}",
+                price_steam=10.0 + index,
+            )
+
+        await state.update_data(title="Тест")
+        await process_offer_description(make_message(bot, "описание"), state, repos)
+
+        data = await state.get_data()
+        assert set(data["item_map"]) == {"1", "2", "3"}
+
+        await process_items_offered(make_message(bot, "2"), state, repos)
+        data = await state.get_data()
+        assert data["items_offered"] == [data["item_map"]["2"]]
+
+    async def test_locked_items_leave_numbering_gaps(self, bot, repos, state, test_user):
+        from bot.handlers.create_offer import process_offer_description
+
+        await repos.users.link_steam(
+            test_user["id"],
+            "76561198000000000",
+            "https://steamcommunity.com/tradeoffer/new/?partner=1&token=abcd",
+            trade_partner="1",
+            trade_token="abcd",
+        )
+        await repos.items.add(
+            owner_id=test_user["id"],
+            steam_asset_id="1",
+            market_hash_name="Дорогой скин",
+            price_steam=100.0,
+        )
+        await repos.items.add(
+            owner_id=test_user["id"],
+            steam_asset_id="2",
+            market_hash_name="Заблокированный",
+            price_steam=50.0,
+            is_tradable=False,
+        )
+
+        await state.update_data(title="Тест")
+        await process_offer_description(make_message(bot, "описание"), state, repos)
+
+        data = await state.get_data()
+        assert set(data["item_map"]) == {"1"}
+
+    async def test_unknown_number_rejected(self, bot, repos, state, session, test_user):
+        from bot.handlers.create_offer import process_items_offered
+
+        await state.update_data(item_map={"1": 123})
+        await process_items_offered(make_message(bot, "99"), state, repos)
+
+        data = await state.get_data()
+        assert "items_offered" not in data
+        assert "нет в списке" in last_text(session)
