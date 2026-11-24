@@ -79,6 +79,29 @@ class TestImages:
         assert build_image_url("") is None
 
 
+class TestTradeHold:
+    def test_hold_marker_disables_trading(self):
+        description = dict(DESCRIPTIONS[0])
+        description["owner_descriptions"] = [
+            {"value": "Tradable After Nov 30, 2026 (10:00:00) GMT"}
+        ]
+
+        item = parse_inventory(ASSETS[:1], [description])[0]
+
+        assert item.trade_hold is True
+        assert item.tradable is False
+        assert item.as_row()["is_tradable"] == 0
+
+    def test_item_without_hold_stays_tradable(self):
+        description = dict(DESCRIPTIONS[0])
+        description["owner_descriptions"] = [{"value": "Этот предмет можно обменять"}]
+
+        item = parse_inventory(ASSETS[:1], [description])[0]
+
+        assert item.trade_hold is False
+        assert item.as_row()["is_tradable"] == 1
+
+
 class TestInventoryParsing:
     def test_maps_description_tags(self):
         items = parse_inventory(ASSETS[:1], DESCRIPTIONS)

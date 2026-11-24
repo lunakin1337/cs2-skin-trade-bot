@@ -98,7 +98,7 @@ async def process_offer_description(
         "",
         "<b>Торгуемые предметы:</b>",
     ]
-    lines.extend(format_item(item) for item in items)
+    lines.extend(format_item(item, index=item["id"]) for item in items)
     lines.append("\nПолный список — в /inventory.")
 
     await message.answer("\n".join(lines))

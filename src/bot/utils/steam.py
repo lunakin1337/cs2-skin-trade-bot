@@ -34,6 +34,16 @@ TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{4,32}$")
 
 STEAM_DESCRIPTION_LIMIT = 10
 
+# Steam отдаёт флаг tradable=1 даже для скинов с торговым кулдауном,
+# а срок блокировки лежит текстом в owner_descriptions.
+TRADE_HOLD_MARKERS = (
+    "tradable after",
+    "обмен возможен после",
+    "нельзя обменять до",
+    "торговый кулдаун",
+    "trade cooldown",
+)
+
 
 class SteamError(Exception):
     """Ошибка обращения к Steam с машиночитаемой причиной."""
@@ -125,6 +135,7 @@ class SteamItem:
     tradable: bool = True
     marketable: bool = True
     commodity: bool = False
+    trade_hold: bool = False
 
     def as_row(self) -> dict[str, Any]:
         """Представить предмет строкой для ItemRepository.sync."""
@@ -140,7 +151,7 @@ class SteamItem:
             "image_url": self.image_url,
             "class_id": self.class_id,
             "instance_id": self.instance_id,
-            "is_tradable": self.tradable,
+            "is_tradable": self.tradable and not self.trade_hold,
             "is_marketable": self.marketable,
         }
 
@@ -161,6 +172,15 @@ class SteamInventory:
 
     def rows(self) -> list[dict[str, Any]]:
         return [item.as_row() for item in self.items]
+
+
+def has_trade_hold(description: dict[str, Any]) -> bool:
+    """Есть ли у предмета торговый кулдаун (Steam пишет срок в owner_descriptions)."""
+    for entry in description.get("owner_descriptions") or []:
+        value = str(entry.get("value") or "").lower()
+        if any(marker in value for marker in TRADE_HOLD_MARKERS):
+            return True
+    return False
 
 
 def _description_key(description: dict[str, Any]) -> tuple[str, str]:
@@ -184,6 +204,7 @@ def parse_inventory(assets: Iterable[dict[str, Any]], descriptions: Iterable[dic
             for tag in description.get("tags") or []
         }
         icon = description.get("icon_url")
+        trade_hold = has_trade_hold(description)
         market_hash_name = description.get("market_hash_name")
         name = description.get("name") or market_hash_name
 
@@ -206,9 +227,10 @@ def parse_inventory(assets: Iterable[dict[str, Any]], descriptions: Iterable[dic
                 exterior=tags.get("exterior"),
                 icon_url=icon,
                 image_url=build_image_url(icon),
-                tradable=bool(description.get("tradable", 0)),
+                tradable=bool(description.get("tradable", 0)) and not trade_hold,
                 marketable=bool(description.get("marketable", 0)),
                 commodity=bool(description.get("commodity", 0)),
+                trade_hold=trade_hold,
             )
         )
 

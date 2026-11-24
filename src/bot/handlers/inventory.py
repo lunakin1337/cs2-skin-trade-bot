@@ -82,7 +82,7 @@ async def _inventory_view(
     lines.append("")
 
     for item in items:
-        lines.append(format_item(item))
+        lines.append(format_item(item, index=item["id"]))
 
     return "\n".join(lines), inventory_keyboard(has_steam, page=page, pages=pages)
 

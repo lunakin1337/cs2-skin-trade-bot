@@ -49,7 +49,7 @@ ROUTERS = (
 )
 
 
-async def wait_for_telegram(bot: Bot, attempts: int = 12, delay: float = 15.0):
+async def wait_for_telegram(bot: Bot, attempts: int = 30, delay: float = 15.0):
     """Дождаться Bot API: на общих IP Telegram отвечает flood control."""
     for attempt in range(1, attempts + 1):
         try:

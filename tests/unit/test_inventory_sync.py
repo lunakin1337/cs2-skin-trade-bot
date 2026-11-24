@@ -55,3 +55,13 @@ class TestInventorySync:
 
         assert await repos.items.count_by_owner(test_user["id"]) == 2
         assert await repos.items.count_by_owner(test_user["id"], tradable_only=True) == 1
+
+
+class TestInventoryPresentation:
+    def test_item_card_contains_database_id(self):
+        from bot.utils.formatters import format_item
+
+        card = format_item({"id": 42, "market_hash_name": "AK-47 | Redline", "price_steam": 12.5}, index=42)
+
+        assert "<code>42</code>" in card
+        assert "AK-47 | Redline" in card
