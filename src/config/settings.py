@@ -22,6 +22,25 @@ def load_env_file(path: Path = ENV_PATH) -> None:
 load_env_file()
 
 
+LLM_DEFAULT_BASE_URL = "https://api.openai.com/v1"
+LLM_DEFAULT_MODEL = "gpt-4o-mini"
+LLM_DEFAULT_TIMEOUT = 10.0
+
+
+@dataclass(frozen=True)
+class LlmConfig:
+    """Настройки ИИ-фолбэка разбора запроса «хочу» (ключ обязателен только для него)."""
+
+    api_key: str = ""
+    base_url: str = LLM_DEFAULT_BASE_URL
+    model: str = LLM_DEFAULT_MODEL
+    timeout: float = LLM_DEFAULT_TIMEOUT
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+
 @dataclass(frozen=True)
 class BotConfig:
     token: str
@@ -58,4 +77,22 @@ def load_config() -> BotConfig:
         web_app_url=os.getenv("WEB_APP_URL", "").strip(),
         web_admin_token=os.getenv("WEB_ADMIN_TOKEN", "").strip(),
         telegram_proxy=os.getenv("TELEGRAM_PROXY", "").strip(),
+    )
+
+
+def load_llm_config() -> LlmConfig:
+    """Настройки LLM из окружения; без LLM_API_KEY фолбэк выключен."""
+    raw_timeout = os.getenv("LLM_TIMEOUT", "").strip()
+    try:
+        timeout = float(raw_timeout) if raw_timeout else LLM_DEFAULT_TIMEOUT
+    except ValueError:
+        timeout = LLM_DEFAULT_TIMEOUT
+    if timeout <= 0:
+        timeout = LLM_DEFAULT_TIMEOUT
+
+    return LlmConfig(
+        api_key=os.getenv("LLM_API_KEY", "").strip(),
+        base_url=os.getenv("LLM_BASE_URL", "").strip() or LLM_DEFAULT_BASE_URL,
+        model=os.getenv("LLM_MODEL", "").strip() or LLM_DEFAULT_MODEL,
+        timeout=timeout,
     )
