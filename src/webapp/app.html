@@ -254,7 +254,9 @@
   .stat { color: var(--hint); font-size: var(--fs-sm); }
   .stat b { color: var(--text); font-weight: 700; }
 
-  button.action {
+  .action {
+    display: inline-block;
+    text-decoration: none;
     padding: 10px 16px;
     border: none;
     border-radius: var(--r-sm);
@@ -264,10 +266,12 @@
     font-weight: 700;
     box-shadow: var(--shadow-sm);
   }
-  button.action:active { transform: scale(0.97); }
-  button.action:disabled { opacity: 0.55; }
+  .action:active { transform: scale(0.97); }
+  .action:disabled { opacity: 0.55; }
 
-  button.ghost {
+  .ghost {
+    display: inline-block;
+    text-decoration: none;
     padding: 9px 14px;
     border-radius: var(--r-sm);
     border: 1px solid var(--border-strong);
@@ -276,10 +280,10 @@
     font-size: var(--fs-sm);
     font-weight: 600;
   }
-  button.ghost:active { transform: scale(0.97); }
-  button.ghost:disabled { opacity: 0.5; }
-  button.ghost.danger { color: var(--danger); border-color: var(--danger); }
-  button.ghost.tiny { padding: 6px 10px; font-size: var(--fs-xs); }
+  .ghost:active { transform: scale(0.97); }
+  .ghost:disabled { opacity: 0.5; }
+  .ghost.danger { color: var(--danger); border-color: var(--danger); }
+  .ghost.tiny { padding: 6px 10px; font-size: var(--fs-xs); }
 
   .grid {
     display: grid;
@@ -468,11 +472,12 @@
   .sk-line { height: 10px; width: 100%; }
   .sk-line.short { width: 58%; }
   .sk-line.price { width: 42%; height: 12px; }
+  .sk-pill { flex: 0 0 auto; width: 92px; height: 30px; border-radius: 999px; }
   .skeleton-row .sk-line + .sk-line { margin-top: 8px; }
 
   @media (prefers-reduced-motion: reduce) {
     .sk::after { animation: none; }
-    .card:active, button.action:active, button.ghost:active { transform: none; }
+    .card:active, .action:active, .ghost:active { transform: none; }
   }
 
   .field { display: block; margin-bottom: var(--sp-3); }
@@ -995,7 +1000,8 @@
 
   async function loadCatalog() {
     if (!state.catalogTree) {
-      skeletonRows($("catalog-categories"), 1);
+      $("catalog-categories").innerHTML =
+        '<span class="sk sk-pill"></span><span class="sk sk-pill"></span><span class="sk sk-pill"></span>';
       const tree = await api("/api/catalog/tree");
       state.catalogTree = tree.categories;
       $("catalog-stat").innerHTML = "<b>" + tree.total + "</b> скинов в каталоге";
