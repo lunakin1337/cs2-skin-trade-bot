@@ -550,7 +550,7 @@
         return;
       }
       $("wanted-results").innerHTML = data.items.map((item, index) =>
-        '<div class="row"><div class="head"><b>' + esc(item.name) + "</b><span class=\\"sub\\">" +
+        '<div class="row"><div class="head"><b>' + esc(item.name) + "</b><span class=\"sub\">" +
         esc(item.price || "") + "</span></div>" +
         '<div class="actions"><button class="ghost" data-wanted="' + index + '">Выбрать</button></div></div>'
       ).join("");
