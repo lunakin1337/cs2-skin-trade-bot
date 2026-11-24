@@ -120,29 +120,40 @@ async def process_items_offered(
         + NEWLINE * 2
         + "Опишите словами, как удобно:"
         + NEWLINE
-        + "• <code>асимов мв</code>"
+        + "• <code>AWP | Asiimov (MW)</code>"
         + NEWLINE
-        + "• <code>нож керамбит до 500$</code>"
+        + "• <code>★ Karambit | Doppler (FN)</code>"
         + NEWLINE
-        + "• <code>перчатки</code>, <code>стикер катовице</code>"
+        + "• <code>AK-47 | Redline до 30$</code>, <code>Sticker | Katowice 2014</code>"
         + NEWLINE * 2
         + "«-» — опубликовать без конкретики."
     )
 
 
 async def _find_candidates(repos: Repositories, text: str) -> list[dict]:
+    """Ищет постепенно ослабляя условия: износ и цена могут отсутствовать в каталоге."""
     parsed = parse_query(text)
-    found = await repos.skins.search_structured(
-        parsed.tokens,
-        wear=parsed.wear,
-        max_price=parsed.max_price,
-        stattrak=parsed.stattrak,
-        limit=CANDIDATES,
-    )
-    if found or not parsed.tokens:
-        return found
+    if not parsed.tokens:
+        return []
 
-    # «нож керамбит»: если ножей в каталоге ещё нет, пробуем без категории,
+    attempts = [
+        {"wear": parsed.wear, "max_price": parsed.max_price},
+        {"wear": parsed.wear, "max_price": None},
+        {"wear": None, "max_price": parsed.max_price},
+        {"wear": None, "max_price": None},
+    ]
+    for attempt in attempts:
+        found = await repos.skins.search_structured(
+            parsed.tokens,
+            wear=attempt["wear"],
+            max_price=attempt["max_price"],
+            stattrak=parsed.stattrak,
+            limit=CANDIDATES,
+        )
+        if found:
+            return found
+
+    # «нож керамбит»: если ножей в каталоге нет, пробуем без категории,
     # но без графити/стикеров — человек просит оружие, а не наклейку
     if "★" in parsed.tokens and len(parsed.tokens) > 1:
         relaxed = await repos.skins.search_structured(
@@ -161,15 +172,20 @@ async def _find_candidates(repos: Repositories, text: str) -> list[dict]:
     # опечатки и незнакомые сокращения — ищем ближайшие названия
     names = await repos.skins.all_names()
     query = " ".join(parsed.tokens).lower()
-    scored = difflib.get_close_matches(query, [name.lower() for name in names], n=CANDIDATES, cutoff=FUZZY_THRESHOLD)
+    scored = difflib.get_close_matches(
+        query, [name.lower() for name in names], n=CANDIDATES, cutoff=FUZZY_THRESHOLD
+    )
     if not scored:
         return []
 
+    anchor = max(parsed.tokens, key=len) if parsed.tokens else ""
     matched = []
     for needle in scored:
         for name in names:
             if name.lower() == needle:
-                matched.append({"market_hash_name": name, "price_text": None})
+                # не подсовываем случайные скины: в названии должно быть самое редкое слово запроса
+                if anchor and anchor.lower() in name.lower():
+                    matched.append({"market_hash_name": name, "price_text": None})
                 break
     return matched
 
@@ -225,7 +241,8 @@ async def process_wanted(message: Message, state: FSMContext, repos: Repositorie
         await message.answer(
             "❌ Не нашёл такого скина в каталоге."
             + NEWLINE
-            + "Попробуйте иначе: <code>asiimov</code>, <code>karambit</code>, <code>стикер</code>, "
+            + "Попробуйте иначе: <code>AWP | Asiimov (MW)</code>, <code>★ Karambit | Doppler</code>, "
+            + "<code>Sticker | Katowice 2014</code>, "
             "или «-», чтобы опубликовать без конкретики."
         )
         return

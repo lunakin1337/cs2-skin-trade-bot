@@ -8,6 +8,27 @@ from bot.utils.steam import TradeUrl, build_image_url
 MARKET_LISTINGS_URL = "https://steamcommunity.com/market/listings/730/"
 NEWLINE = chr(10)
 
+WEAR_ABBR = {
+    "factory new": "FN",
+    "minimal wear": "MW",
+    "field-tested": "FT",
+    "well-worn": "WW",
+    "battle-scarred": "BS",
+    "прямо с завода": "FN",
+    "немного поношенное": "MW",
+    "после полевых испытаний": "FT",
+    "поношенное": "WW",
+    "закалённое в боях": "BS",
+    "закаленное в боях": "BS",
+}
+
+
+def wear_abbr(value) -> str:
+    """Износ как в Steam: FN / MW / FT / WW / BS."""
+    if not value:
+        return "—"
+    return WEAR_ABBR.get(str(value).strip().lower(), str(value))
+
 
 def format_price(price: float | None) -> str:
     """Цена в USD или прочерк."""
@@ -86,13 +107,13 @@ def format_item(item: dict, index: int | None = None) -> str:
     if item.get("rarity"):
         details.append(item["rarity"])
     if item.get("exterior"):
-        details.append(item["exterior"])
+        details.append(wear_abbr(item["exterior"]))
     if item.get("float_value") is not None:
         details.append(f"float {item['float_value']:.4f}")
 
     suffix = f"\n     {' · '.join(details)}" if details else ""
     price = f"\n     {format_price(item.get('price_steam'))}"
-    tradable = "" if item.get("is_tradable") else " 🔒"
+    tradable = " 🔒" if item.get("is_tradable") == 0 else ""
 
     return f"{prefix}{name}{tradable}{suffix}{price}"
 
@@ -192,6 +213,17 @@ def _pad(text: str, width: int) -> str:
     return text + " " * (width - len(text))
 
 
+def format_author(offer: dict) -> str:
+    """Автор объявления: @username, иначе имя, иначе telegram id."""
+    if offer.get("username"):
+        return f"@{offer['username']}"
+    if offer.get("first_name"):
+        return str(offer["first_name"])
+    if offer.get("telegram_id"):
+        return f"id {offer['telegram_id']}"
+    return "—"
+
+
 def format_offer_card(offer: dict, offered_items: list, index: int) -> str:
     """Карточка предложения: слева что отдаёт, справа что хочет, снизу комментарий."""
     left: list[str] = []
@@ -214,7 +246,7 @@ def format_offer_card(offer: dict, offered_items: list, index: int) -> str:
     left += [""] * (height - len(left))
     right += [""] * (height - len(right))
 
-    user = f"@{offer.get('username') or '—'}"
+    user = format_author(offer)
     rating = f"{float(offer.get('rating') or 0):.1f}⭐"
     footer = _wrap(f"#{offer['id']} · {user} · {rating}", CARD_INNER)
 

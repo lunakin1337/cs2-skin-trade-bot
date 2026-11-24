@@ -115,6 +115,8 @@ WEAR_CODES: dict[str, str] = {
     "ww": "Well-Worn",
     "бс": "Battle-Scarred",
     "bs": "Battle-Scarred",
+    "бт": "Battle-Scarred",
+    "bt": "Battle-Scarred",
 }
 
 STATTRAK_WORDS = ("stattrak", "стт", "ст", "st", "статтрак")

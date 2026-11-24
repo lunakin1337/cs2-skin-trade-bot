@@ -446,7 +446,7 @@ class OfferRepository:
     async def get_active(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         cur = await self.db.execute(
             """
-            SELECT o.*, u.username, u.first_name, u.rating
+            SELECT o.*, u.username, u.first_name, u.telegram_id, u.rating
             FROM offers o
             JOIN users u ON o.creator_id = u.id
             WHERE o.status = 'active'
@@ -461,7 +461,7 @@ class OfferRepository:
     async def get_by_id(self, offer_id: int) -> Optional[Dict[str, Any]]:
         cur = await self.db.execute(
             """
-            SELECT o.*, u.username, u.first_name, u.rating
+            SELECT o.*, u.username, u.first_name, u.telegram_id, u.rating
             FROM offers o
             JOIN users u ON o.creator_id = u.id
             WHERE o.id = ?
@@ -483,6 +483,10 @@ class OfferRepository:
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+    async def delete(self, offer_id: int) -> None:
+        await self.db.execute("DELETE FROM offers WHERE id = ?", (offer_id,))
+        await self.db.commit()
 
     async def update_status(self, offer_id: int, status: str) -> None:
         await self.db.execute(

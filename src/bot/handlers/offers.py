@@ -45,7 +45,7 @@ async def _offer_cards(repos: Repositories, offers: list[dict]) -> str:
     return (NEWLINE * 2).join(cards)
 
 
-async def board_view(repos: Repositories, page: int = 0):
+async def board_view(repos: Repositories, page: int = 0, viewer_telegram_id: int | None = None):
     total = await repos.offers.count_active()
     if not total:
         return EMPTY_BOARD, back_to_main_keyboard()
@@ -60,7 +60,7 @@ async def board_view(repos: Repositories, page: int = 0):
         + NEWLINE
         + f"<pre>{html.escape(cards)}</pre>"
     )
-    return text, board_keyboard(offers, page, pages)
+    return text, board_keyboard(offers, page, pages, viewer_telegram_id)
 
 
 async def my_offers_view(repos: Repositories, from_user):
@@ -86,26 +86,26 @@ async def my_offers_view(repos: Repositories, from_user):
 
 @router.message(Command("board"))
 async def cmd_board(message: Message, repos: Repositories) -> None:
-    text, markup = await board_view(repos)
+    text, markup = await board_view(repos, viewer_telegram_id=message.from_user.id)
     await message.answer(text, reply_markup=markup)
 
 
 @router.message(Command("offers"))
 async def cmd_offers_alias(message: Message, repos: Repositories) -> None:
-    text, markup = await board_view(repos)
+    text, markup = await board_view(repos, viewer_telegram_id=message.from_user.id)
     await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "offers")
 async def cb_offers_alias(callback: CallbackQuery, repos: Repositories) -> None:
-    text, markup = await board_view(repos)
+    text, markup = await board_view(repos, viewer_telegram_id=callback.from_user.id)
     await edit_or_send(callback.message, text, markup)
     await notify(callback)
 
 
 @router.callback_query(F.data == "board")
 async def cb_board(callback: CallbackQuery, repos: Repositories) -> None:
-    text, markup = await board_view(repos)
+    text, markup = await board_view(repos, viewer_telegram_id=callback.from_user.id)
     await edit_or_send(callback.message, text, markup)
     await notify(callback)
 
@@ -122,7 +122,7 @@ async def cb_board_page(callback: CallbackQuery, repos: Repositories) -> None:
     except ValueError:
         page = 0
 
-    text, markup = await board_view(repos, page)
+    text, markup = await board_view(repos, page, callback.from_user.id)
     await edit_or_send(callback.message, text, markup)
     await notify(callback)
 
@@ -138,6 +138,27 @@ async def cb_my_offers(callback: CallbackQuery, repos: Repositories) -> None:
     text, markup = await my_offers_view(repos, callback.from_user)
     await edit_or_send(callback.message, text, markup)
     await notify(callback)
+
+
+@router.callback_query(F.data.startswith("offer_delete_"))
+async def cb_offer_delete(callback: CallbackQuery, repos: Repositories) -> None:
+    try:
+        offer_id = int(callback.data.rsplit("_", 1)[-1])
+    except ValueError:
+        await notify(callback, "Некорректное предложение", alert=True)
+        return
+
+    offer = await repos.offers.get_by_id(offer_id)
+    user = await ensure_user(repos, callback.from_user)
+
+    if not offer or offer["creator_id"] != user["id"]:
+        await notify(callback, "Это не ваше предложение", alert=True)
+        return
+
+    await repos.offers.delete(offer_id)
+    text, markup = await my_offers_view(repos, callback.from_user)
+    await edit_or_send(callback.message, text, markup)
+    await notify(callback, f"Предложение #{offer_id} удалено")
 
 
 @router.callback_query(F.data.startswith("offer_cancel_"))

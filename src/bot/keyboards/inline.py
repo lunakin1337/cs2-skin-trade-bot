@@ -81,13 +81,19 @@ def inventory_keyboard(has_steam: bool, page: int = 0, pages: int = 1) -> Inline
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def board_keyboard(offers: Iterable[dict], page: int, pages: int) -> InlineKeyboardMarkup:
+def board_keyboard(
+    offers: Iterable[dict],
+    page: int,
+    pages: int,
+    viewer_telegram_id: int | None = None,
+) -> InlineKeyboardMarkup:
     offers = list(offers)
     rows: list[list[InlineKeyboardButton]] = []
 
     accept = [
         InlineKeyboardButton(text=f"🤝 Принять #{offer['id']}", callback_data=f"accept_offer_{offer['id']}")
         for offer in offers
+        if viewer_telegram_id is None or offer.get("telegram_id") != viewer_telegram_id
     ]
     for index in range(0, len(accept), 2):
         rows.append(accept[index:index + 2])
@@ -107,11 +113,22 @@ def board_keyboard(offers: Iterable[dict], page: int, pages: int) -> InlineKeybo
 
 
 def my_offers_keyboard(offers: Iterable[dict]) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=f"🗑 Снять #{offer['id']}", callback_data=f"offer_cancel_{offer['id']}")]
-        for offer in offers
-        if offer.get("status") == "active"
-    ]
+    rows: list[list[InlineKeyboardButton]] = []
+    for offer in offers:
+        offer_id = offer["id"]
+        if offer.get("status") == "active":
+            rows.append(
+                [
+                    InlineKeyboardButton(text=f"⏸ Снять #{offer_id}", callback_data=f"offer_cancel_{offer_id}"),
+                    InlineKeyboardButton(text=f"🗑 Удалить #{offer_id}", callback_data=f"offer_delete_{offer_id}"),
+                ]
+            )
+        else:
+            rows.append(
+                [
+                    InlineKeyboardButton(text=f"🗑 Удалить #{offer_id}", callback_data=f"offer_delete_{offer_id}"),
+                ]
+            )
     rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
