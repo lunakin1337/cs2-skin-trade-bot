@@ -11,6 +11,12 @@ class TradeStates(StatesGroup):
     waiting_confirm = State()
 
 
+class DisputeStates(StatesGroup):
+    """Открытие спора: ждём причину текстом."""
+
+    waiting_reason = State()
+
+
 class ProfileStates(StatesGroup):
     """Привязка Steam."""
 

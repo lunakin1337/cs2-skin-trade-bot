@@ -19,7 +19,7 @@ Telegram Mini App.
 ## Стек и структура
 
 - aiogram 3.34, SQLite (aiosqlite), aiohttp; Python 3.11+
-- Тесты: pytest (113 зелёных), линт ruff; CI в GitHub Actions
+- Тесты: pytest (136 зелёных), линт ruff; CI в GitHub Actions
 - src-layout: пакеты `bot`, `config`, `database` из `src/`
 
 ```
@@ -40,8 +40,10 @@ src/
   web_app.py                  отдаёт Mini App и /stats, поднимает API
   web_api.py                  JSON API для Mini App (initData + админка)
   webapp/app.html             сам Mini App (SPA на ванильном JS)
-  webapp_context.py           ключи состояния aiohttp
+    services/disputes.py      споры: проверки, открытие, уведомления
+  webapp_context.py           ключи состояния aiohttp (в т.ч. бот для уведомлений)
 scripts/refresh_webapp_url.py обновляет WEB_APP_URL по логу cloudflared
+scripts/cleanup_test_trades.py чистка мусорных тестовых сделок (dry-run / --apply)
 ```
 
 ## Модель данных (кратко)
@@ -107,6 +109,10 @@ StatTrak. `services/skin_search.py` ищет по шагам: с износом 
    растут счётчики сделок, можно поставить оценку 1–5 (средний рейтинг пересчитывается,
    контрагент получает уведомление).
 7. Отмена доступна до получения скинов, объявление возвращается на доску.
+8. Если обмен пошёл не так, участник жмёт «⚠️ Открыть спор» (в боте и в Mini App),
+   пишет причину текстом — создаётся запись в `disputes`, админ (8851272459) и вторая
+   сторона получают уведомление. Открытый спор на сделку только один (уникальный индекс
+   `idx_disputes_open_trade`), кнопка исчезает, пока спор не решён через /resolve.
 
 **Mini App.** `src/webapp/app.html` — табы: Инвентарь, Каталог, Доска, Создать, Мои, Сделки,
 Профиль, Рейтинг, Админ (только для 8851272459), Помощь. Авторизация: `initData`
@@ -116,7 +122,7 @@ StatTrak. `services/skin_search.py` ищет по шагам: с износом 
 **API Mini App:** `/api/me`, `/api/profile/steam`, `/api/profile/refresh`, `/api/inventory`,
 `/api/inventory/sync`, `/api/catalog`, `/api/catalog/tree`, `/api/catalog/items`,
 `/api/offers` (GET доска, POST создание), `/api/my_offers`, `/api/offers/{id}/accept|cancel|
-delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api/rating`,
+delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api/trades/{id}/dispute`, `/api/rating`,
 `/api/admin/{stats|users|ban|disputes|disputes/{id}/resolve}`.
 
 ## Инфраструктура и запуск (что где живёт)
@@ -145,6 +151,10 @@ delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api
   Защита — тест, который парсит встроенный скрипт через esprima (`tests/unit/test_mini_app.py`).
 - **Дубли обработчиков** на один callback/команду → работает только первый зарегистрированный
   роутер.
+- **Конкретный маршрут API должен регистрироваться раньше общего**: aiohttp берёт первый
+  совпавший, поэтому `/api/trades/{id}/dispute` объявлен до `/api/trades/{id}/{action}`.
+- **Бот в веб-процессе** — только для уведомлений (`app[BOT_KEY]`): если он не создан,
+  спор всё равно открывается, но уведомления не уходят (в логе warning).
 - **id предмета** — это `items.id` из базы (не Steam asset id). Нумерация в интерфейсе
   отдельная, 1..N, и совпадает между `/inventory` и шагом выбора скинов.
 
@@ -157,5 +167,6 @@ delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api
 4. Автоматическая отправка Steam Trade Offer из бота (нужна сессия Steam бота: cookies +
    shared_secret), сейчас ссылка с предзаполнением.
 5. Почистить историю git от отозванных токенов (`git filter-repo`) — по согласованию.
-6. Убрать мусорные тестовые сделки (в базе были сделки с продавцом-ботом).
-7. Споры: сейчас только просмотр и решение админом, нет создания спора пользователем из UI.
+6. ~~Убрать мусорные тестовые сделки~~ — готов `scripts/cleanup_test_trades.py`
+   (dry-run по умолчанию, `--apply` с бэкапом базы); на проде не запускался.
+7. ~~Споры из UI~~ — кнопка в боте и Mini App, `POST /api/trades/{id}/dispute`.

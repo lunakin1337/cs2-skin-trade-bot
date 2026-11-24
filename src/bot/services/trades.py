@@ -78,4 +78,5 @@ async def trade_payload(repos: Repositories, trade: dict, viewer_id: int) -> dic
         "steam_url": steam_trade_link(partner, token, my_assets) if ready else None,
         "counterpart": (counterpart or {}).get("username") or (counterpart or {}).get("first_name") or "—",
         "counterpart_telegram": (counterpart or {}).get("telegram_id"),
+        "dispute_open": await repos.disputes.get_open_by_trade(trade["id"]) is not None,
     }

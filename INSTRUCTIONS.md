@@ -126,7 +126,7 @@ python -m bot.services.skin_catalog --pages 40 --query "Sticker |"
 ## 10. Тесты и качество
 
 ```bash
-pytest -q                     # весь набор (113 тестов)
+pytest -q                     # весь набор (136 тестов)
 pytest tests/integration -q   # API и хендлеры
 ruff check src tests scripts
 ```
@@ -148,6 +148,11 @@ ruff check src tests scripts
 ## 12. Резервные копии
 
 - Копия базы на момент сборки 0.1: `data/bot-v0.1.db.bak`.
+- Чистка мусорных тестовых сделок (где сторона — бот): сначала посмотреть, что удалится,
+  и только потом применять —
+  `python scripts/cleanup_test_trades.py --db data/bot.db` (dry-run, база открывается
+  только на чтение), затем `--apply`: скрипт сам делает копию
+  `data/bot-cleanup-<дата>.db.bak` через sqlite backup API и удаляет записи одной транзакцией.
 - Бэкап вручную: скопировать `data/bot.db` при остановленном боте (SQLite).
 - Восстановление: положить файл обратно в `data/bot.db`, запустить бота — миграции
   доведут схему до актуальной.

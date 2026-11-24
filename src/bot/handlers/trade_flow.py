@@ -5,12 +5,17 @@ import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.handlers.trades import render_trades
 from bot.keyboards.inline import back_to_main_keyboard
+from bot.services.disputes import DisputeError, notify_dispute, open_dispute
+from bot.states.trade import DisputeStates
+from bot.utils.formatters import NEWLINE
 from bot.utils.telegram import edit_or_send, notify
 from bot.utils.users import ensure_user
+from config.settings import BotConfig
 from database.repository import Repositories
 
 logger = logging.getLogger(__name__)
@@ -24,7 +29,7 @@ TRADE_INFO = (
     "3. Открывается кнопка «Обмен» — она ведёт на Steam Trade URL контрагента\n"
     "4. Каждая сторона жмёт «Получил», когда скины на руках\n"
     "5. После этого сделка закрывается и можно поставить оценку\n\n"
-    "Если что-то пошло не так — /dispute."
+    "Если что-то пошло не так — /dispute или кнопка «⚠️ Открыть спор» в /trades."
 )
 
 
@@ -161,6 +166,84 @@ async def cb_trade_complete(callback: CallbackQuery, repos: Repositories) -> Non
 
     await _refresh_message(callback, repos)
     await notify(callback, "Отметили получение, ждём вторую сторону")
+
+
+def dispute_cancel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="❌ Не открывать спор", callback_data="trade_dispute_cancel")]]
+    )
+
+
+@router.callback_query(F.data.startswith("trade_dispute_"))
+async def cb_trade_dispute(
+    callback: CallbackQuery, repos: Repositories, state: FSMContext
+) -> None:
+    if callback.data == "trade_dispute_cancel":
+        await state.clear()
+        await edit_or_send(callback.message, "Спор не открыт.", back_to_main_keyboard())
+        await notify(callback)
+        return
+
+    trade_id = _trade_id(callback.data)
+    trade = await repos.trades.get_by_id(trade_id) if trade_id else None
+    if not trade:
+        await notify(callback, "Сделка не найдена", alert=True)
+        return
+
+    user = await ensure_user(repos, callback.from_user)
+    if _role(trade, user["id"]) is None:
+        await notify(callback, "Это не ваша сделка", alert=True)
+        return
+    if await repos.disputes.get_open_by_trade(trade_id):
+        await notify(callback, "По этой сделке уже открыт спор", alert=True)
+        return
+
+    await state.set_state(DisputeStates.waiting_reason)
+    await state.update_data(dispute_trade_id=trade_id)
+    await edit_or_send(
+        callback.message,
+        f"⚠️ <b>Спор по сделке #{trade_id}</b>"
+        + NEWLINE
+        + NEWLINE
+        + "Опишите одним сообщением, что пошло не так: что именно не пришло, "
+        "кто и когда отправил обмен, чем это подтверждается."
+        + NEWLINE
+        + "Спор увидит администратор и вторая сторона.",
+        dispute_cancel_keyboard(),
+    )
+    await notify(callback)
+
+
+@router.message(DisputeStates.waiting_reason)
+async def msg_dispute_reason(
+    message: Message, repos: Repositories, state: FSMContext, config: BotConfig
+) -> None:
+    data = await state.get_data()
+    trade_id = data.get("dispute_trade_id")
+    user = await ensure_user(repos, message.from_user)
+    if not trade_id:
+        await state.clear()
+        await message.answer("Черновик спора потерялся — откройте его заново в /trades.",
+                             reply_markup=back_to_main_keyboard())
+        return
+
+    try:
+        dispute_id, trade = await open_dispute(repos, int(trade_id), user["id"], message.text or "")
+    except DisputeError as error:
+        await state.clear()
+        await message.answer(f"❌ {error}", reply_markup=back_to_main_keyboard())
+        return
+
+    await state.clear()
+    await notify_dispute(
+        message.bot, repos, trade, dispute_id, user["id"], message.text or "", config.admin_ids
+    )
+    await message.answer(
+        f"⚖️ Спор #{dispute_id} по сделке #{trade_id} открыт."
+        + NEWLINE
+        + "Администратор и вторая сторона получили уведомление.",
+        reply_markup=back_to_main_keyboard(),
+    )
 
 
 @router.callback_query(F.data.startswith("trade_cancel_"))

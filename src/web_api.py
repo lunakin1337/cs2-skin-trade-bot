@@ -4,8 +4,15 @@ import json
 import logging
 from typing import Any
 
+from aiogram import Bot
 from aiohttp import web
 
+from bot.services.disputes import (
+    DISPUTE_STATUSES as DISPUTE_TRADE_STATUSES,
+    DisputeError,
+    notify_dispute,
+    open_dispute,
+)
 from bot.services.inventory_sync import sync_inventory
 from bot.services.skin_search import find_candidates
 from bot.services.trades import trade_payload
@@ -16,7 +23,7 @@ from bot.utils.telegram_auth import parse_init_data
 from bot.utils.validators import validate_steam_id64, validate_trade_url
 from config.settings import BotConfig
 from database.repository import Repositories
-from webapp_context import CONFIG_KEY, REPOS_KEY
+from webapp_context import BOT_KEY, CONFIG_KEY, REPOS_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -564,6 +571,8 @@ def _trade_json(trade: dict, user_id: int) -> dict:
         actions.append({"name": "confirm", "label": "✅ Подтвердить"})
     if trade["status"] == "in_escrow" and not trade.get(f"{role}_completed_at"):
         actions.append({"name": "complete", "label": "📦 Получил"})
+    if trade["status"] in DISPUTE_TRADE_STATUSES and not trade.get("dispute_open"):
+        actions.append({"name": "dispute", "label": "⚠️ Открыть спор"})
     if trade["status"] in {"pending", "confirmed", "in_escrow"}:
         actions.append({"name": "cancel", "label": "✖️ Отменить"})
     if trade["status"] == "completed":
@@ -578,6 +587,7 @@ def _trade_json(trade: dict, user_id: int) -> dict:
         "counterpart_url": counterpart_url,
         "confirmed": bool(trade.get(f"{role}_confirmed_at")),
         "received": bool(trade.get(f"{role}_completed_at")),
+        "dispute_open": bool(trade.get("dispute_open")),
         "actions": actions,
     }
 
@@ -592,8 +602,9 @@ async def api_trades(request: web.Request) -> web.Response:
 
     items = []
     for trade in trades:
-        payload = _trade_json(trade, user["id"])
-        payload.update(await trade_payload(repos, trade, user["id"]))
+        details = await trade_payload(repos, trade, user["id"])
+        payload = _trade_json({**trade, **details}, user["id"])
+        payload.update(details)
         items.append(payload)
 
     return web.json_response({"items": items})
@@ -676,6 +687,35 @@ async def api_trade_action(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "counterparty_rating": rating})
 
     return web.json_response({"error": "unknown action"}, status=400)
+
+
+async def api_trade_dispute(request: web.Request) -> web.Response:
+    """Открыть спор по сделке: участник, причина текстом, один открытый спор на сделку."""
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    try:
+        trade_id = int(request.match_info["trade_id"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad trade id"}, status=400)
+
+    body = await _body(request)
+    reason = str(body.get("reason") or "")
+    repos = _repos(request)
+
+    try:
+        dispute_id, trade = await open_dispute(repos, trade_id, user["id"], reason)
+    except DisputeError as error:
+        return web.json_response({"error": str(error)}, status=error.status)
+
+    bot: Bot | None = request.app.get(BOT_KEY)
+    if bot is not None:
+        await notify_dispute(bot, repos, trade, dispute_id, user["id"], reason, _config(request).admin_ids)
+    else:
+        logger.warning("Спор #%s открыт без уведомлений: бот не подключён к веб-приложению", dispute_id)
+
+    return web.json_response({"ok": True, "dispute_id": dispute_id, "trade_id": trade_id})
 
 
 # ---------- рейтинг ----------
@@ -849,6 +889,8 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/offers/{offer_id}/cancel", api_offer_cancel)
     app.router.add_post("/api/offers/{offer_id}/delete", api_offer_delete)
     app.router.add_get("/api/trades", api_trades)
+    # конкретный путь спора регистрируется раньше общего {action}
+    app.router.add_post("/api/trades/{trade_id}/dispute", api_trade_dispute)
     app.router.add_post("/api/trades/{trade_id}/{action}", api_trade_action)
     app.router.add_get("/api/rating", api_rating)
     app.router.add_get("/api/admin/stats", api_admin_stats)
