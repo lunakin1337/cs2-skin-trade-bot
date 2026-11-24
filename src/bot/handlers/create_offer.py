@@ -142,6 +142,22 @@ async def _find_candidates(repos: Repositories, text: str) -> list[dict]:
     if found or not parsed.tokens:
         return found
 
+    # «нож керамбит»: если ножей в каталоге ещё нет, пробуем без категории,
+    # но без графити/стикеров — человек просит оружие, а не наклейку
+    if "★" in parsed.tokens and len(parsed.tokens) > 1:
+        relaxed = await repos.skins.search_structured(
+            [token for token in parsed.tokens if token != "★"],
+            wear=parsed.wear,
+            max_price=parsed.max_price,
+            limit=CANDIDATES * 2,
+        )
+        weapons = [
+            row for row in relaxed
+            if not any(word in row["market_hash_name"] for word in ("Graffiti", "Sticker", "Capsule"))
+        ]
+        if weapons:
+            return weapons[:CANDIDATES]
+
     # опечатки и незнакомые сокращения — ищем ближайшие названия
     names = await repos.skins.all_names()
     query = " ".join(parsed.tokens).lower()
