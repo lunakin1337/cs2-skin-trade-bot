@@ -444,12 +444,15 @@ class TestCounterOffers:
         assert trade["direction"] == "incoming"
         assert [item["name"] for item in trade["my_items"]] == ["★ Karambit | Doppler"]
         assert [item["name"] for item in trade["their_items"]] == ["AWP | Asiimov"]
-        assert "items=" in trade["steam_url"]
-        assert "asset-seller" in trade["steam_url"]
+        assert trade["steam_url"] is None, "ссылка не должна появляться до подтверждения обеих сторон"
 
         await client.post(f"/api/trades/{trade_id}/confirm", headers=auth_headers(999000111))
+
         seller_view = await (await client.get("/api/trades", headers=auth_headers(999000111))).json()
-        assert seller_view["items"][0]["status"] == "in_escrow"
+        ready = seller_view["items"][0]
+        assert ready["status"] == "in_escrow"
+        assert "items=" in ready["steam_url"]
+        assert "asset-seller" in ready["steam_url"]
 
     async def test_counter_rejects_foreign_items(self, client):
         seller, buyer, seller_item, buyer_item, offer_id = await self._prepare(client)

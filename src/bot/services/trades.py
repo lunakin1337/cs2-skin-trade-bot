@@ -67,12 +67,15 @@ async def trade_payload(repos: Repositories, trade: dict, viewer_id: int) -> dic
     token = (counterpart or {}).get("steam_trade_token")
     my_assets = [item["asset_id"] for item in sides[role] if item["asset_id"]]
 
+    # ссылка на обмен появляется только когда подтвердили обе стороны
+    ready = trade["status"] == "in_escrow"
+
     return {
         "role": role,
         "direction": "incoming" if role == "seller" else "outgoing",
         "my_items": sides[role],
         "their_items": sides[counterpart_role],
-        "steam_url": steam_trade_link(partner, token, my_assets),
+        "steam_url": steam_trade_link(partner, token, my_assets) if ready else None,
         "counterpart": (counterpart or {}).get("username") or (counterpart or {}).get("first_name") or "—",
         "counterpart_telegram": (counterpart or {}).get("telegram_id"),
     }

@@ -553,7 +553,11 @@ def _trade_json(trade: dict, user_id: int) -> dict:
     role = "buyer" if is_buyer else "seller"
 
     counterpart = (trade.get("seller_username") if is_buyer else trade.get("buyer_username")) or "—"
-    counterpart_url = trade.get("seller_trade_url" if is_buyer else "buyer_trade_url")
+    counterpart_url = (
+        trade.get("seller_trade_url" if is_buyer else "buyer_trade_url")
+        if trade["status"] == "in_escrow"
+        else None
+    )
 
     actions = []
     if trade["status"] == "pending" and not trade.get(f"{role}_confirmed_at"):
