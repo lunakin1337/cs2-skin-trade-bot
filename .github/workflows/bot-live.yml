@@ -1,12 +1,10 @@
 name: Bot Live
 
-# Бесплатный хостинг поллинга на раннерах GitHub: job живёт ~5ч45м,
-# следующий запуск поднимает бота снова. Пропущенные апдейты Telegram
-# додержит 24 часа, поэтому паузы не теряются.
+# Резервный хостинг поллинга на раннерах GitHub. Запускается только вручную:
+# одновременно может работать лишь один поллер с токеном бота, поэтому
+# расписание отключено — иначе бот на компьютере получает Conflict.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "10 */6 * * *"
 
 concurrency:
   group: bot-live
@@ -40,10 +38,8 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           set +e
-          # У раннеров общий IP и Telegram иногда отвечает 429 — не валим job,
-          # поллинг сам умеет ждать retry_after.
           for attempt in 1 2 3 4 5; do
-            response=$(curl -s --max-time 20 "https://api.telegram.org/bot${BOT_TOKEN}/getMe")
+            response=$(curl -s --max-time 20 "https://api.telegram.org/bot${BOT_TOKEN}/getMe" || true)
             if echo "$response" | grep -q '"ok":true'; then
               echo "$response" | python -c "import json,sys; d=json.load(sys.stdin); print('bot:', d['result']['username'])"
               exit 0
