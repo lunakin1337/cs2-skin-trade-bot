@@ -752,14 +752,17 @@ class SkinRepository:
             await self.db.execute(
                 """
                 INSERT INTO skins (
-                    market_hash_name, name, price_text, price_value, icon_url, updated_at
+                    market_hash_name, name, price_text, price_value, icon_url,
+                    category, weapon, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(market_hash_name) DO UPDATE SET
                     name = excluded.name,
                     price_text = COALESCE(excluded.price_text, skins.price_text),
                     price_value = COALESCE(excluded.price_value, skins.price_value),
                     icon_url = COALESCE(excluded.icon_url, skins.icon_url),
+                    category = COALESCE(excluded.category, skins.category),
+                    weapon = COALESCE(excluded.weapon, skins.weapon),
                     updated_at = datetime('now')
                 """,
                 (
@@ -768,6 +771,8 @@ class SkinRepository:
                     skin.get("price_text"),
                     skin.get("price_value"),
                     skin.get("icon_url"),
+                    skin.get("category"),
+                    skin.get("weapon"),
                 ),
             )
         await self.db.commit()
@@ -837,6 +842,90 @@ class SkinRepository:
             (limit,),
         )
         return [row["market_hash_name"] for row in await cur.fetchall()]
+
+    async def category_tree(self) -> List[Dict[str, Any]]:
+        """Категории с количеством позиций и оружием внутри."""
+        cur = await self.db.execute(
+            """
+            SELECT category, COUNT(*) AS cnt
+            FROM skins
+            GROUP BY category
+            ORDER BY cnt DESC
+            """
+        )
+        categories = [dict(row) for row in await cur.fetchall()]
+
+        cur = await self.db.execute(
+            """
+            SELECT category, weapon, COUNT(*) AS cnt
+            FROM skins
+            WHERE weapon IS NOT NULL
+            GROUP BY category, weapon
+            ORDER BY cnt DESC
+            """
+        )
+        weapons: Dict[str, List[Dict[str, Any]]] = {}
+        for row in await cur.fetchall():
+            weapons.setdefault(row["category"], []).append(
+                {"weapon": row["weapon"], "count": row["cnt"]}
+            )
+
+        for category in categories:
+            category["weapons"] = weapons.get(category["category"], [])
+        return categories
+
+    def _filters(
+        self,
+        category: Optional[str],
+        weapon: Optional[str],
+        query: Optional[str],
+    ) -> tuple[str, List[Any]]:
+        conditions: List[str] = []
+        params: List[Any] = []
+
+        if category:
+            conditions.append("category = ?")
+            params.append(category)
+        if weapon:
+            conditions.append("weapon = ?")
+            params.append(weapon)
+        if query:
+            conditions.append("market_hash_name LIKE ?")
+            params.append(f"%{query}%")
+
+        where = " AND ".join(conditions) if conditions else "1 = 1"
+        return where, params
+
+    async def list_items(
+        self,
+        category: Optional[str] = None,
+        weapon: Optional[str] = None,
+        query: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        where, params = self._filters(category, weapon, query)
+        cur = await self.db.execute(
+            f"""
+            SELECT * FROM skins
+            WHERE {where}
+            ORDER BY COALESCE(price_value, 1000000), market_hash_name
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
+    async def count_items(
+        self,
+        category: Optional[str] = None,
+        weapon: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> int:
+        where, params = self._filters(category, weapon, query)
+        cur = await self.db.execute(f"SELECT COUNT(*) AS cnt FROM skins WHERE {where}", tuple(params))
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
 
     async def count(self) -> int:
         cur = await self.db.execute("SELECT COUNT(*) AS cnt FROM skins")

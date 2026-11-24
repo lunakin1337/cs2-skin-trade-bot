@@ -9,6 +9,7 @@ from aiohttp import web
 from bot.services.inventory_sync import sync_inventory
 from bot.services.skin_search import find_candidates
 from bot.utils.formatters import TRADE_STATUS_LABELS, format_author, short_name, wear_abbr
+from bot.utils.skin_categories import CATEGORY_ORDER, category_title
 from bot.utils.steam import TradeUrl, get_steam_client, SteamError, parse_trade_url
 from bot.utils.telegram_auth import parse_init_data
 from bot.utils.validators import validate_steam_id64, validate_trade_url
@@ -310,6 +311,72 @@ async def api_catalog(request: web.Request) -> web.Response:
                 for row in found
             ],
             "total": await _repos(request).skins.count(),
+        }
+    )
+
+
+async def api_catalog_tree(request: web.Request) -> web.Response:
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    repos = _repos(request)
+    tree = await repos.skins.category_tree()
+    order = {code: index for index, code in enumerate(CATEGORY_ORDER)}
+
+    categories = [
+        {
+            "code": row["category"] or "other",
+            "title": category_title(row["category"] or "other"),
+            "count": row["cnt"],
+            "weapons": row["weapons"],
+        }
+        for row in sorted(tree, key=lambda row: order.get(row["category"], 99))
+    ]
+    return web.json_response({"total": await repos.skins.count(), "categories": categories})
+
+
+async def api_catalog_items(request: web.Request) -> web.Response:
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    category = request.query.get("category") or None
+    weapon = request.query.get("weapon") or None
+    query = request.query.get("q") or None
+
+    try:
+        page = max(0, int(request.query.get("page", "0")))
+    except ValueError:
+        page = 0
+    try:
+        size = min(50, max(1, int(request.query.get("size", "20"))))
+    except ValueError:
+        size = 20
+
+    repos = _repos(request)
+    total = await repos.skins.count_items(category=category, weapon=weapon, query=query)
+    items = await repos.skins.list_items(
+        category=category, weapon=weapon, query=query, limit=size, offset=page * size
+    )
+
+    return web.json_response(
+        {
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": max(1, -(-total // size)),
+            "items": [
+                {
+                    "name": item["market_hash_name"],
+                    "short": short_name(item["market_hash_name"]),
+                    "price": item.get("price_text"),
+                    "image": item.get("icon_url"),
+                    "category": item.get("category"),
+                    "weapon": item.get("weapon"),
+                }
+                for item in items
+            ],
         }
     )
 
@@ -732,6 +799,8 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/inventory", api_inventory)
     app.router.add_post("/api/inventory/sync", api_inventory_sync)
     app.router.add_get("/api/catalog", api_catalog)
+    app.router.add_get("/api/catalog/tree", api_catalog_tree)
+    app.router.add_get("/api/catalog/items", api_catalog_items)
     app.router.add_get("/api/offers", api_offers_board)
     app.router.add_post("/api/offers", api_offers_create)
     app.router.add_get("/api/my_offers", api_my_offers)

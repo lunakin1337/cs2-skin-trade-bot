@@ -329,3 +329,57 @@ class TestAdminApi:
 
         banned = await repos.users.get_by_id(target["id"])
         assert banned["is_banned"] == 1
+
+
+class TestCatalogApi:
+    async def _seed(self, repos):
+        await repos.skins.upsert_many(
+            [
+                {"market_hash_name": "AK-47 | Redline (Field-Tested)", "category": "rifles", "weapon": "AK-47"},
+                {"market_hash_name": "AK-47 | Vulcan (Minimal Wear)", "category": "rifles", "weapon": "AK-47"},
+                {"market_hash_name": "AWP | Asiimov (Field-Tested)", "category": "snipers", "weapon": "AWP"},
+                {"market_hash_name": "★ Karambit | Doppler (Factory New)", "category": "knives", "weapon": None},
+            ]
+        )
+
+    async def test_tree_groups_categories(self, client):
+        await self._seed(client.app[REPOS_KEY])
+
+        data = await (await client.get("/api/catalog/tree", headers=auth_headers())).json()
+        by_code = {category["code"]: category for category in data["categories"]}
+
+        assert by_code["rifles"]["count"] == 2
+        assert by_code["knives"]["count"] == 1
+        assert {weapon["weapon"] for weapon in by_code["rifles"]["weapons"]} == {"AK-47"}
+        assert by_code["knives"]["weapons"] == []
+
+    async def test_items_filter_by_category_and_weapon(self, client):
+        await self._seed(client.app[REPOS_KEY])
+
+        all_skins = await (await client.get("/api/catalog/items?category=rifles", headers=auth_headers())).json()
+        assert all_skins["total"] == 2
+        assert len(all_skins["items"]) == 2
+
+        ak_only = await (
+            await client.get("/api/catalog/items?category=rifles&weapon=AK-47", headers=auth_headers())
+        ).json()
+        assert ak_only["total"] == 2
+
+        knives = await (await client.get("/api/catalog/items?category=knives", headers=auth_headers())).json()
+        assert knives["items"][0]["name"].startswith("★ Karambit")
+
+    async def test_pagination(self, client):
+        repos = client.app[REPOS_KEY]
+        await repos.skins.upsert_many(
+            [
+                {"market_hash_name": f"M4A4 | Skin {index}", "category": "rifles", "weapon": "M4A4"}
+                for index in range(7)
+            ]
+        )
+
+        first = await (await client.get("/api/catalog/items?category=rifles&size=3&page=0", headers=auth_headers())).json()
+        second = await (await client.get("/api/catalog/items?category=rifles&size=3&page=1", headers=auth_headers())).json()
+
+        assert first["pages"] == 3
+        assert len(first["items"]) == 3
+        assert {item["name"] for item in first["items"]}.isdisjoint({item["name"] for item in second["items"]})

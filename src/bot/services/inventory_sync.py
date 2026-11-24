@@ -4,6 +4,7 @@ import logging
 from typing import Optional
 
 from bot.utils.prices import get_price_fetcher
+from bot.utils.skin_categories import classify
 from bot.utils.steam import SteamClient, SteamInventory, get_steam_client
 from config.settings import BotConfig
 from database.repository import Repositories
@@ -76,6 +77,8 @@ async def sync_inventory(
                 "market_hash_name": item.market_hash_name,
                 "name": item.name,
                 "icon_url": item.icon_url,
+                "category": classify(item.market_hash_name)[0],
+                "weapon": classify(item.market_hash_name)[1],
             }
             for item in inventory.items
             if item.market_hash_name
