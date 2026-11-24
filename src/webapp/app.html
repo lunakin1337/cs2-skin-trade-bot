@@ -2,102 +2,549 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
 <title>CS2 Skin Trade</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   :root {
-    --bg: var(--tg-theme-bg-color, #ffffff);
-    --bg-2: var(--tg-theme-secondary-bg-color, #f3f4f6);
-    --text: var(--tg-theme-text-color, #1c1c1e);
-    --hint: var(--tg-theme-hint-color, #8a8a8f);
-    --link: var(--tg-theme-link-color, #2b6cb0);
-    --button: var(--tg-theme-button-color, #2b6cb0);
-    --button-text: var(--tg-theme-button-text-color, #ffffff);
-    --line: rgba(128, 128, 128, 0.25);
-    --danger: #c0392b;
-    --ok: #2f855a;
+    color-scheme: light dark;
+
+    --bg: #eef1f7;
+    --surface: #ffffff;
+    --surface-2: #f4f6fb;
+    --surface-3: rgba(16, 24, 40, 0.06);
+    --text: #101828;
+    --text-soft: #475467;
+    --hint: #7c8798;
+    --border: rgba(16, 24, 40, 0.10);
+    --border-strong: rgba(16, 24, 40, 0.18);
+    --accent: #2f6bff;
+    --accent-text: #ffffff;
+    --accent-soft: rgba(47, 107, 255, 0.12);
+    --link: #2f6bff;
+    --ok: #0b8a4b;
+    --danger: #d92d20;
+    --sk-base: rgba(16, 24, 40, 0.07);
+    --sk-shine: rgba(255, 255, 255, 0.75);
+    --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.07);
+    --shadow: 0 10px 30px rgba(16, 24, 40, 0.08);
+
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 20px;
+    --sp-6: 26px;
+    --fs-xs: 11px;
+    --fs-sm: 13px;
+    --fs-md: 15px;
+    --fs-lg: 18px;
+    --r-xs: 8px;
+    --r-sm: 10px;
+    --r-md: 14px;
+    --r-lg: 18px;
+
+    --rarity-consumer: #b0c3d9;
+    --rarity-industrial: #5e98d9;
+    --rarity-milspec: #4b69ff;
+    --rarity-restricted: #8847ff;
+    --rarity-classified: #d32ce6;
+    --rarity-covert: #eb4b4b;
+    --rarity-rare: #f0b90b;
+    --rarity-contraband: #e4ae39;
+    --rarity-default: #8b96a5;
   }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f131b;
+      --surface: #171d27;
+      --surface-2: #1e2531;
+      --surface-3: rgba(255, 255, 255, 0.07);
+      --text: #e8edf6;
+      --text-soft: #b3bdcd;
+      --hint: #8590a3;
+      --border: rgba(255, 255, 255, 0.09);
+      --border-strong: rgba(255, 255, 255, 0.17);
+      --accent: #5b8cff;
+      --accent-text: #0b1020;
+      --accent-soft: rgba(91, 140, 255, 0.16);
+      --link: #7aa2ff;
+      --ok: #3ddc97;
+      --danger: #ff6b5e;
+      --sk-base: rgba(255, 255, 255, 0.07);
+      --sk-shine: rgba(255, 255, 255, 0.10);
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+      --shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+    }
+  }
+
+  html[data-theme="dark"] {
+    --bg: #0f131b;
+    --surface: #171d27;
+    --surface-2: #1e2531;
+    --surface-3: rgba(255, 255, 255, 0.07);
+    --text: #e8edf6;
+    --text-soft: #b3bdcd;
+    --hint: #8590a3;
+    --border: rgba(255, 255, 255, 0.09);
+    --border-strong: rgba(255, 255, 255, 0.17);
+    --accent-soft: rgba(91, 140, 255, 0.16);
+    --ok: #3ddc97;
+    --danger: #ff6b5e;
+    --sk-base: rgba(255, 255, 255, 0.07);
+    --sk-shine: rgba(255, 255, 255, 0.10);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+  }
+
+  html[data-theme="light"] {
+    --bg: #eef1f7;
+    --surface: #ffffff;
+    --surface-2: #f4f6fb;
+    --surface-3: rgba(16, 24, 40, 0.06);
+    --text: #101828;
+    --text-soft: #475467;
+    --hint: #7c8798;
+    --border: rgba(16, 24, 40, 0.10);
+    --border-strong: rgba(16, 24, 40, 0.18);
+    --accent-soft: rgba(47, 107, 255, 0.12);
+    --ok: #0b8a4b;
+    --danger: #d92d20;
+    --sk-base: rgba(16, 24, 40, 0.07);
+    --sk-shine: rgba(255, 255, 255, 0.75);
+  }
+
   * { box-sizing: border-box; }
+
   body {
-    margin: 0; padding: 0 0 28px;
-    background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 15px; -webkit-font-smoothing: antialiased;
+    margin: 0;
+    padding: 0 0 calc(28px + env(safe-area-inset-bottom, 0px));
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: var(--fs-md);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
   }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
-  header img.avatar, header .avatar-stub { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: var(--bg-2); flex: 0 0 auto; }
-  header .who { min-width: 0; }
-  header .who .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  header .who .meta { color: var(--hint); font-size: 13px; margin-top: 2px; }
-  nav.tabs { display: flex; gap: 8px; padding: 10px 16px 4px; overflow-x: auto; position: sticky; top: 0; background: var(--bg); z-index: 3; }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(120% 46% at 50% -8%, var(--accent-soft), transparent 68%);
+    opacity: 0.85;
+  }
+
+  button { font-family: inherit; cursor: pointer; }
+
+  header.hero {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: calc(var(--sp-4) + env(safe-area-inset-top, 0px)) var(--sp-4) var(--sp-3);
+  }
+  header.hero .avatar,
+  header.hero .avatar-stub {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: linear-gradient(140deg, var(--accent), var(--accent-soft));
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    flex: 0 0 auto;
+  }
+  header.hero .who { min-width: 0; flex: 1; }
+  header.hero .who .name {
+    font-size: var(--fs-lg);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  header.hero .who .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+  .pill {
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--text-soft);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 2px 9px;
+    white-space: nowrap;
+  }
+  .pill.rating { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+  .pill.warn { color: var(--danger); border-color: var(--danger); background: transparent; }
+
+  nav.tabs {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-4);
+    overflow-x: auto;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+  nav.tabs::-webkit-scrollbar { display: none; }
   nav.tabs button {
-    padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line);
-    background: transparent; color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 13px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-soft);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }
-  nav.tabs button.active { background: var(--button); border-color: var(--button); color: var(--button-text); }
-  main { padding: 12px 16px 0; }
+  nav.tabs button.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+    box-shadow: var(--shadow-sm);
+  }
+  nav.tabs button:active { transform: scale(0.97); }
+
+  main { position: relative; z-index: 1; padding: var(--sp-3) var(--sp-4) 0; }
   section[hidden] { display: none; }
-  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-  .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-3);
+    flex-wrap: wrap;
+  }
+  .toolbar .title { font-size: var(--fs-md); font-weight: 700; letter-spacing: -0.01em; }
+
+  .chips { display: flex; gap: var(--sp-2); overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
   .chips button {
-    padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line);
-    background: transparent; color: var(--text); font-size: 13px; white-space: nowrap;
+    flex: 0 0 auto;
+    padding: 7px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-soft);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    white-space: nowrap;
   }
-  .chips button.active { background: var(--button); border-color: var(--button); color: var(--button-text); }
-  .stat { color: var(--hint); font-size: 13px; }
-  .stat b { color: var(--text); }
+  .chips button.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .stat { color: var(--hint); font-size: var(--fs-sm); }
+  .stat b { color: var(--text); font-weight: 700; }
+
   button.action {
-    padding: 9px 14px; border-radius: 10px; border: none; background: var(--button);
-    color: var(--button-text); font-size: 14px; font-weight: 600;
+    padding: 10px 16px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    box-shadow: var(--shadow-sm);
   }
+  button.action:active { transform: scale(0.97); }
   button.action:disabled { opacity: 0.55; }
+
   button.ghost {
-    padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line);
-    background: transparent; color: var(--text); font-size: 13px; font-weight: 600;
+    padding: 9px 14px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--fs-sm);
+    font-weight: 600;
   }
+  button.ghost:active { transform: scale(0.97); }
+  button.ghost:disabled { opacity: 0.5; }
   button.ghost.danger { color: var(--danger); border-color: var(--danger); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-  .card { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg-2); }
-  .card.picked { outline: 2px solid var(--button); }
-  .card .thumb { height: 92px; display: flex; align-items: center; justify-content: center; background: rgba(128,128,128,0.08); }
-  .card .thumb img { max-height: 84px; max-width: 100%; }
-  .card .body { padding: 8px 10px 10px; }
-  .card .title { font-size: 13px; line-height: 1.3; height: 2.6em; overflow: hidden; }
-  .card .price { font-weight: 600; margin-top: 6px; font-size: 13px; }
-  .card .price.unknown { color: var(--hint); font-weight: 500; }
-  .badges { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
-  .badge { font-size: 11px; padding: 2px 6px; border-radius: 6px; background: rgba(128,128,128,0.16); color: var(--hint); }
-  .row { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; background: var(--bg-2); }
-  .row .head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
-  .row .head b { font-size: 14px; }
-  .row .sub { color: var(--hint); font-size: 13px; margin-top: 6px; }
-  .row .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
-  .split .cell { background: rgba(128,128,128,0.08); border-radius: 10px; padding: 8px; font-size: 13px; }
-  .split .cell .label { color: var(--hint); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-  .pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 16px; }
-  .pager button { padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--text); }
-  .pager button:disabled { opacity: 0.4; }
-  .state { text-align: center; color: var(--hint); padding: 28px 12px; line-height: 1.5; }
-  .field { display: block; margin-bottom: 10px; }
-  .field span { display: block; font-size: 12px; color: var(--hint); margin-bottom: 4px; }
-  .field input, .field textarea {
-    width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
-    background: var(--bg-2); color: var(--text); font-size: 14px; font-family: inherit;
+  button.ghost.tiny { padding: 6px 10px; font-size: var(--fs-xs); }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: var(--sp-3);
   }
-  .kv { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+
+  .card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.12s ease, border-color 0.12s ease;
+  }
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    background: var(--rarity, var(--rarity-default));
+  }
+  .card:active { transform: scale(0.985); }
+  .card.picked { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-sm); }
+  .card .thumb {
+    height: 96px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-2);
+  }
+  .card .thumb img { max-height: 82px; max-width: 88%; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.28)); }
+  .card .thumb-stub {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--hint);
+    letter-spacing: 0.04em;
+  }
+  .card .body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: var(--sp-2) var(--sp-3) var(--sp-3);
+    flex: 1;
+  }
+  .card .title {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    line-height: 1.35;
+    max-height: 2.7em;
+    overflow: hidden;
+  }
+  .card .price { font-size: var(--fs-sm); font-weight: 700; margin-top: auto; }
+  .card .price.unknown { color: var(--hint); font-weight: 500; }
+  .card .pick-mark {
+    display: none;
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 12px;
+    font-weight: 700;
+    align-items: center;
+    justify-content: center;
+  }
+  .card.picked .pick-mark { display: flex; }
+
+  .r-consumer { --rarity: var(--rarity-consumer); }
+  .r-industrial { --rarity: var(--rarity-industrial); }
+  .r-milspec { --rarity: var(--rarity-milspec); }
+  .r-restricted { --rarity: var(--rarity-restricted); }
+  .r-classified { --rarity: var(--rarity-classified); }
+  .r-covert { --rarity: var(--rarity-covert); }
+  .r-rare { --rarity: var(--rarity-rare); }
+  .r-contraband { --rarity: var(--rarity-contraband); }
+  .r-default { --rarity: var(--rarity-default); }
+
+  .badges { display: flex; flex-wrap: wrap; gap: 4px; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--hint);
+    border: 1px solid transparent;
+  }
+  .badge.rar { color: var(--text-soft); border-color: var(--rarity, var(--rarity-default)); }
+  .badge.rar::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--rarity, var(--rarity-default));
+    margin-right: 5px;
+  }
+  .badge.lock { color: var(--hint); background: var(--surface-3); }
+
+  .row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: var(--sp-3);
+    margin-bottom: var(--sp-3);
+    box-shadow: var(--shadow-sm);
+  }
+  .row .head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-2); }
+  .row .head b { font-size: var(--fs-md); font-weight: 700; letter-spacing: -0.01em; }
+  .row .sub { color: var(--text-soft); font-size: var(--fs-sm); margin-top: 6px; }
+  .row .sub.muted { color: var(--hint); }
+  .row .actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); margin-top: var(--sp-2); }
+  .split .cell {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: var(--sp-2);
+    font-size: var(--fs-sm);
+  }
+  .split .cell .label {
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--hint);
+    margin-bottom: 4px;
+  }
+
+  .pager { display: flex; align-items: center; justify-content: center; gap: var(--sp-3); margin-top: var(--sp-4); }
+  .pager button {
+    min-width: 44px;
+    padding: 8px 14px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .pager button:disabled { opacity: 0.4; }
+
+  .state { text-align: center; color: var(--hint); padding: var(--sp-6) var(--sp-3); line-height: 1.5; font-size: var(--fs-sm); }
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--sp-2);
+    text-align: center;
+    color: var(--hint);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    padding: var(--sp-6) var(--sp-4);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--r-md);
+    background: var(--surface);
+  }
+  .empty-icon { font-size: 26px; line-height: 1; }
+
+  .sk {
+    position: relative;
+    overflow: hidden;
+    background: var(--sk-base);
+    border-radius: var(--r-xs);
+  }
+  .sk::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, var(--sk-shine), transparent);
+    animation: sk-shine 1.3s ease-in-out infinite;
+  }
+  @keyframes sk-shine { to { transform: translateX(100%); } }
+  .skeleton-card::before { display: none; }
+  .skeleton-card .body { gap: 8px; }
+  .sk-thumb { height: 96px; border-radius: 0; }
+  .sk-line { height: 10px; width: 100%; }
+  .sk-line.short { width: 58%; }
+  .sk-line.price { width: 42%; height: 12px; }
+  .skeleton-row .sk-line + .sk-line { margin-top: 8px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sk::after { animation: none; }
+    .card:active, button.action:active, button.ghost:active { transform: none; }
+  }
+
+  .field { display: block; margin-bottom: var(--sp-3); }
+  .field > span {
+    display: block;
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--hint);
+    margin-bottom: 6px;
+  }
+  .field input,
+  .field textarea,
+  input.search {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--fs-sm);
+    font-family: inherit;
+  }
+  .field input:focus,
+  .field textarea:focus,
+  input.search:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  input.search { flex: 1 1 180px; min-width: 0; }
+
+  .kv {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-sm);
+  }
   .kv:last-child { border-bottom: none; }
   .kv .k { color: var(--hint); }
-  .stars { display: flex; gap: 6px; margin-top: 8px; }
-  .stars button { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--text); font-weight: 700; }
-  .notice { padding: 10px 12px; border-radius: 10px; background: rgba(128,128,128,0.12); font-size: 13px; margin-bottom: 12px; }
-  .notice.error { color: var(--danger); }
-  .notice.ok { color: var(--ok); }
+
+  .stars { display: flex; gap: 6px; margin-top: var(--sp-2); }
+  .stars button {
+    width: 38px;
+    height: 38px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .notice {
+    padding: var(--sp-3);
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: var(--fs-sm);
+    margin-bottom: var(--sp-3);
+    box-shadow: var(--shadow-sm);
+  }
+  .notice.error { color: var(--danger); border-color: var(--danger); }
+  .notice.ok { color: var(--ok); border-color: var(--ok); }
+
+  a { color: var(--link); }
 </style>
 </head>
 <body>
-<header>
+<header class="hero">
   <div class="avatar-stub" id="avatar"></div>
   <div class="who">
     <div class="name" id="who-name">Загрузка…</div>
@@ -142,8 +589,7 @@
     <div class="chips" id="catalog-categories"></div>
     <div class="chips" id="catalog-weapons" hidden></div>
     <div class="toolbar" style="margin-top:10px">
-      <input id="catalog-search" placeholder="Поиск по названию" autocomplete="off"
-             style="flex:1;padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg-2);color:var(--text)">
+      <input id="catalog-search" class="search" placeholder="Поиск по названию" autocomplete="off">
       <button class="ghost" id="catalog-find">🔍 Найти</button>
     </div>
     <div id="catalog-list"></div>
@@ -187,7 +633,7 @@
 
   <section id="view-counter" hidden>
     <div class="toolbar">
-      <div class="stat" id="counter-title">Встречное предложение</div>
+      <div class="title" id="counter-title">Встречное предложение</div>
       <button class="ghost" id="counter-back">← Назад к доске</button>
     </div>
     <div class="field"><span>Выберите скины из своего инвентаря, которые отдаёте</span></div>
@@ -212,8 +658,8 @@
       <div id="profile-body"></div>
     </div>
     <div class="row">
-      <b>Привязка Steam</b>
-      <div class="field" style="margin-top:10px">
+      <div class="title">Привязка Steam</div>
+      <div class="field" style="margin-top:12px">
         <span>SteamID64 (17 цифр)</span>
         <input id="steam-id" placeholder="76561198000000000" inputmode="numeric">
       </div>
@@ -235,18 +681,18 @@
 
   <section id="view-admin" hidden>
     <div class="row">
-      <b>Сводка</b>
+      <div class="title">Сводка</div>
       <div id="admin-stats" style="margin-top:10px"></div>
     </div>
-    <div class="toolbar"><b>Пользователи</b></div>
+    <div class="toolbar"><div class="title">Пользователи</div></div>
     <div id="admin-users"></div>
-    <div class="toolbar"><b>Споры</b></div>
+    <div class="toolbar"><div class="title">Споры</div></div>
     <div id="admin-disputes"></div>
   </section>
 
   <section id="view-help" hidden>
     <div class="row">
-      <b>Что умеет приложение</b>
+      <div class="title">Что умеет приложение</div>
       <div class="sub">Инвентарь подтягивается из Steam, объявления живут на общей доске, сделки идут в два подтверждения с обменом по Trade URL.</div>
       <div class="sub">Профиль → привязка SteamID64 и Trade URL. Инвентарь → «Синхронизировать». Создать → выбрать скины, описать желание, опубликовать.</div>
       <div class="sub">Сделки: подтвердить → «Получил» → оценка 1–5. Отменить можно до получения скинов.</div>
@@ -258,6 +704,24 @@
 (function () {
   const tg = window.Telegram ? window.Telegram.WebApp : null;
   if (tg) { tg.ready(); tg.expand(); }
+
+  const CATALOG_PAGE_SIZE = 25;
+  const RARITY_TONES = [
+    ["контрабанд", "contraband"], ["contraband", "contraband"],
+    ["тайное", "covert"], ["covert", "covert"],
+    ["засекреч", "classified"], ["classified", "classified"],
+    ["экзотичн", "classified"], ["exotic", "classified"],
+    ["запрещ", "restricted"], ["restricted", "restricted"],
+    ["примечательн", "restricted"], ["remarkable", "restricted"],
+    ["армейск", "milspec"], ["mil-spec", "milspec"],
+    ["превосходн", "milspec"], ["superior", "milspec"],
+    ["промышлен", "industrial"], ["industrial", "industrial"],
+    ["высшего класса", "industrial"], ["high grade", "industrial"],
+    ["ширпотреб", "consumer"], ["consumer", "consumer"],
+    ["базового класса", "consumer"], ["base grade", "consumer"],
+    ["экстраординар", "rare"], ["extraordinary", "rare"],
+    ["★", "rare"]
+  ];
 
   const state = {
     profile: null,
@@ -271,6 +735,7 @@
     inventoryItems: [],
     catalog: { category: null, weapon: null, query: "", page: 0, pages: 1 },
     catalogTree: null,
+    catalogPages: new Map(),
     counter: { offerId: null, picked: new Set() },
   };
 
@@ -293,12 +758,12 @@
 
   async function api(path, options) {
     const opts = options || {};
+    const headers = { "X-Telegram-Init-Data": authData() };
+    if (opts.body) headers["Content-Type"] = "application/json";
+
     const response = await fetch(path, {
       method: opts.method || "GET",
-      headers: {
-        "X-Telegram-Init-Data": authData(),
-        ...(opts.body ? { "Content-Type": "application/json" } : {}),
-      },
+      headers: headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
 
@@ -328,6 +793,83 @@
     container.innerHTML = '<div class="state">' + esc(text) + "</div>";
   }
 
+  function empty_(container, icon, text) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">' + icon +
+      "</div><div>" + esc(text) + "</div></div>";
+  }
+
+  // ---------- тема ----------
+
+  function themeMap() {
+    return [
+      ["bg_color", "--bg"],
+      ["secondary_bg_color", "--surface"],
+      ["text_color", "--text"],
+      ["hint_color", "--hint"],
+      ["button_color", "--accent"],
+      ["button_text_color", "--accent-text"],
+      ["link_color", "--link"],
+    ];
+  }
+
+  function applyTheme() {
+    const root = document.documentElement;
+    const params = (tg && tg.themeParams) || {};
+    themeMap().forEach((pair) => {
+      const value = params[pair[0]];
+      if (value) root.style.setProperty(pair[1], value);
+    });
+    const prefersDark = typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    // ?theme=dark|light — только для локального предпросмотра вне Telegram
+    const forced = tg ? null : new URLSearchParams(location.search).get("theme");
+    const scheme = (tg && tg.colorScheme) || forced || (prefersDark ? "dark" : "light");
+    root.setAttribute("data-theme", scheme === "dark" ? "dark" : "light");
+  }
+
+  applyTheme();
+  if (tg && tg.onEvent) tg.onEvent("themeChanged", applyTheme);
+
+  // ---------- скелетоны ----------
+
+  function skeletonCard() {
+    return '<div class="card skeleton-card"><div class="sk sk-thumb"></div>' +
+      '<div class="body"><div class="sk sk-line"></div><div class="sk sk-line short"></div>' +
+      '<div class="sk sk-line price"></div></div></div>';
+  }
+
+  function skeletonCards(container, count) {
+    let cards = "";
+    for (let index = 0; index < count; index += 1) cards += skeletonCard();
+    container.innerHTML = '<div class="grid">' + cards + "</div>";
+  }
+
+  function skeletonRows(container, count) {
+    let rows = "";
+    for (let index = 0; index < count; index += 1) {
+      rows += '<div class="row skeleton-row"><div class="sk sk-line short"></div>' +
+        '<div class="sk sk-line"></div><div class="sk sk-line"></div></div>';
+    }
+    container.innerHTML = rows;
+  }
+
+  // ---------- редкость ----------
+
+  function rarityTone(rarity) {
+    const value = String(rarity || "").toLowerCase();
+    if (!value) return "default";
+    for (let index = 0; index < RARITY_TONES.length; index += 1) {
+      const pair = RARITY_TONES[index];
+      if (value.indexOf(pair[0]) >= 0) return pair[1];
+    }
+    return "default";
+  }
+
+  function initials(name) {
+    const words = String(name || "").split(/[|]/).pop().trim().split(/\s+/).slice(0, 2);
+    return words.map((word) => word.charAt(0).toUpperCase()).join("") || "?";
+  }
+
   // ---------- профиль ----------
 
   function renderProfile() {
@@ -336,16 +878,19 @@
 
     const steam = profile.steam || {};
     $("who-name").textContent = steam.persona || profile.first_name || profile.username || "Игрок";
-    const meta = [];
-    if (profile.username) meta.push("@" + profile.username);
-    meta.push((profile.rating || 0).toFixed(1) + " ⭐");
-    meta.push((profile.trades_count || 0) + " сделок");
-    if (!steam.linked) meta.push("Steam не привязан");
-    $("who-meta").textContent = meta.join(" · ");
+
+    const pills = [];
+    pills.push('<span class="pill rating">⭐ ' + (profile.rating || 0).toFixed(1) + "</span>");
+    pills.push('<span class="pill">' + (profile.trades_count || 0) + " сделок</span>");
+    if (profile.username) pills.push('<span class="pill">@' + esc(profile.username) + "</span>");
+    if (!steam.linked) pills.push('<span class="pill warn">Steam не привязан</span>');
+    $("who-meta").innerHTML = pills.join("");
 
     if (steam.avatar) {
       const avatar = $("avatar");
-      avatar.outerHTML = '<img class="avatar" id="avatar" src="' + esc(steam.avatar) + '" alt="">';
+      if (avatar.tagName !== "IMG") {
+        avatar.outerHTML = '<img class="avatar" id="avatar" src="' + esc(steam.avatar) + '" alt="">';
+      }
     }
 
     $("tab-admin").hidden = !profile.is_admin;
@@ -378,24 +923,29 @@
   function itemCard(item, options) {
     const opts = options || {};
     const price = money(item.price);
-    const badges = [item.rarity, item.exterior].filter(Boolean)
-      .map((badge) => '<span class="badge">' + esc(badge) + "</span>").join("");
-    const thumb = item.image ? '<img src="' + esc(item.image) + '" alt="" loading="lazy">' : "";
+    const tone = rarityTone(item.rarity);
+    const badges = [];
+    if (item.rarity) badges.push('<span class="badge rar">' + esc(item.rarity) + "</span>");
+    if (item.exterior) badges.push('<span class="badge">' + esc(item.exterior) + "</span>");
+    if (!item.tradable) badges.push('<span class="badge lock">🔒 не торгуется</span>');
+    const thumb = item.image
+      ? '<img src="' + esc(item.image) + '" alt="" loading="lazy">'
+      : '<span class="thumb-stub">' + esc(initials(item.name)) + "</span>";
     const picked = opts.pickable && state.picked.has(item.id);
 
-    return '<article class="card' + (picked ? " picked" : "") + '"' +
+    return '<article class="card r-' + tone + (picked ? " picked" : "") + '"' +
       (opts.pickable ? ' data-item="' + item.id + '"' : "") + ">" +
       '<div class="thumb">' + thumb + "</div>" +
+      '<span class="pick-mark">✓</span>' +
       '<div class="body"><div class="title">' + esc(item.name) + "</div>" +
       '<div class="price ' + (price ? "" : "unknown") + '">' + (price || "цена неизвестна") + "</div>" +
-      (badges ? '<div class="badges">' + badges + "</div>" : "") +
-      (item.tradable ? "" : '<div class="badges"><span class="badge">🔒 не торгуется</span></div>') +
+      (badges.length ? '<div class="badges">' + badges.join("") + "</div>" : "") +
       "</div></article>";
   }
 
   async function loadInventory(page) {
     const list = $("inventory-list");
-    state_(list, "Загружаю инвентарь…");
+    skeletonCards(list, 8);
 
     const data = await api("/api/inventory?page=" + page);
     state.invPage = data.page;
@@ -407,7 +957,7 @@
 
     if (!data.items.length) {
       const linked = state.profile && state.profile.steam && state.profile.steam.linked;
-      state_(list, linked
+      empty_(list, "🎒", linked
         ? "Пусто. Нажмите «Синхронизировать», чтобы подтянуть скины из Steam."
         : "Привяжите Steam-аккаунт в разделе «Профиль».");
     } else {
@@ -444,8 +994,8 @@
   // ---------- каталог ----------
 
   async function loadCatalog() {
-    const categories = $("catalog-categories");
     if (!state.catalogTree) {
+      skeletonRows($("catalog-categories"), 1);
       const tree = await api("/api/catalog/tree");
       state.catalogTree = tree.categories;
       $("catalog-stat").innerHTML = "<b>" + tree.total + "</b> скинов в каталоге";
@@ -477,34 +1027,71 @@
       ).join("");
   }
 
-  async function loadCatalogItems(page) {
-    const list = $("catalog-list");
-    state_(list, "Загружаю каталог…");
-
-    const params = new URLSearchParams({ page: String(page), size: "25" });
+  function catalogQuery(page) {
+    const params = new URLSearchParams({ page: String(page), size: String(CATALOG_PAGE_SIZE) });
     if (state.catalog.category) params.set("category", state.catalog.category);
     if (state.catalog.weapon) params.set("weapon", state.catalog.weapon);
     if (state.catalog.query) params.set("q", state.catalog.query);
+    return params.toString();
+  }
 
-    const data = await api("/api/catalog/items?" + params.toString());
+  async function fetchCatalogPage(page) {
+    const params = catalogQuery(page);
+    const cached = state.catalogPages.get(params);
+    if (cached) return cached;
+
+    const data = await api("/api/catalog/items?" + params);
+    state.catalogPages.set(params, data);
+    return data;
+  }
+
+  function prefetchCatalogPage(page) {
+    const params = catalogQuery(page);
+    if (state.catalogPages.has(params)) return;
+    fetchCatalogPage(page).catch(() => {});
+  }
+
+  function catalogCard(item) {
+    const price = money(item.price);
+    const tone = rarityTone(item.rarity);
+    const badges = [];
+    if (item.rarity) badges.push('<span class="badge rar">' + esc(item.rarity) + "</span>");
+    const thumb = item.image
+      ? '<img src="' + esc(item.image) + '" alt="" loading="lazy">'
+      : '<span class="thumb-stub">' + esc(initials(item.name)) + "</span>";
+
+    return '<article class="card r-' + tone + '">' +
+      '<div class="thumb">' + thumb + "</div>" +
+      '<div class="body"><div class="title">' + esc(item.name) + "</div>" +
+      '<div class="price ' + (price ? "" : "unknown") + '">' + (price || "цена неизвестна") + "</div>" +
+      (badges.length ? '<div class="badges">' + badges.join("") + "</div>" : "") +
+      '<div class="actions"><button class="ghost tiny" data-want="' + esc(item.name) + '">🎯 Хочу это</button></div>' +
+      "</div></article>";
+  }
+
+  async function loadCatalogItems(page) {
+    const list = $("catalog-list");
+    const key = catalogQuery(page);
+    const cached = state.catalogPages.get(key);
+
+    if (!cached) skeletonCards(list, 6);
+    const data = cached || await fetchCatalogPage(page);
+
     state.catalog.page = data.page;
     state.catalog.pages = data.pages;
 
     if (!data.items.length) {
-      state_(list, "Ничего не нашлось. Сбросьте фильтры или измените запрос.");
+      empty_(list, "🔍", "Ничего не нашлось. Сбросьте фильтры или измените запрос.");
     } else {
-      list.innerHTML = data.items.map((item) =>
-        '<div class="row"><div class="head"><b>' + esc(item.short || item.name) + "</b>" +
-        '<span class="sub">' + esc(item.price || "") + "</span></div>" +
-        '<div class="sub">' + esc(item.name) + "</div>" +
-        '<div class="actions"><button class="ghost" data-want="' + esc(item.name) + '">🎯 Хочу это</button></div></div>'
-      ).join("");
+      list.innerHTML = '<div class="grid">' + data.items.map((item) => catalogCard(item)).join("") + "</div>";
     }
 
     $("catalog-pager").hidden = data.pages <= 1;
     $("catalog-label").textContent = (data.page + 1) + " / " + data.pages;
     $("catalog-prev").disabled = data.page === 0;
     $("catalog-next").disabled = data.page + 1 >= data.pages;
+
+    if (data.page + 1 < data.pages) prefetchCatalogPage(data.page + 1);
   }
 
   $("catalog-categories").addEventListener("click", (event) => {
@@ -531,6 +1118,7 @@
 
   $("catalog-reset").addEventListener("click", () => {
     state.catalog = { category: null, weapon: null, query: "", page: 0, pages: 1 };
+    state.catalogPages.clear();
     $("catalog-search").value = "";
     renderCatalogChips();
     loadCatalogItems(0).catch(fail);
@@ -548,7 +1136,6 @@
     switchTab("create");
   });
 
-
   // ---------- встречное предложение ----------
 
   async function openCounter(offerId) {
@@ -559,12 +1146,12 @@
 
   async function loadCounter() {
     const container = $("counter-items");
-    state_(container, "Загружаю инвентарь…");
+    skeletonCards(container, 6);
 
     const data = await api("/api/inventory?page=0&size=50");
     const items = data.items.filter((item) => item.tradable);
     if (!items.length) {
-      state_(container, "Нет торгуемых скинов — синхронизируйте инвентарь.");
+      empty_(container, "🔒", "Нет торгуемых скинов — синхронизируйте инвентарь.");
       return;
     }
     container.innerHTML = '<div class="grid">' + items.map((item) => itemCard(item, { pickable: true })).join("") + "</div>";
@@ -606,11 +1193,16 @@
 
   // ---------- доска ----------
 
+  function offeredRow(item) {
+    const tone = rarityTone(item.rarity);
+    const price = money(item.price);
+    return '<div class="sub r-' + tone + '"><span class="badge rar">' + esc(item.rarity || "скин") + "</span> " +
+      esc(item.short || item.name) + (price ? " · " + price : "") + "</div>";
+  }
+
   function offerCard(offer, options) {
     const opts = options || {};
-    const items = offer.offered.map((item) =>
-      '<div class="sub">• ' + esc(item.short || item.name) + " " + (money(item.price) || "") + "</div>"
-    ).join("");
+    const items = offer.offered.map(offeredRow).join("");
     const wanted = esc(offer.wanted || "—");
 
     const actions = [];
@@ -624,21 +1216,21 @@
     }
 
     return '<div class="row"><div class="head"><b>#' + offer.id + " · " + esc(offer.title) + "</b>" +
-      "<span class=sub>" + (offer.rating || 0).toFixed(1) + " ⭐</span></div>" +
+      '<span class="pill rating">⭐ ' + (offer.rating || 0).toFixed(1) + "</span></div>" +
       '<div class="split">' +
-        '<div class="cell"><div class="label">Отдаёт</div>' + (items || '<div class="sub">—</div>') +
+        '<div class="cell"><div class="label">Отдаёт</div>' + (items || '<div class="sub muted">—</div>') +
           (offer.value ? '<div class="sub">' + money(offer.value) + "</div>" : "") + "</div>" +
         '<div class="cell"><div class="label">Хочет</div><div class="sub">' + wanted + "</div>" +
-          (offer.comment ? '<div class="sub">' + esc(offer.comment) + "</div>" : "") + "</div>" +
+          (offer.comment ? '<div class="sub muted">' + esc(offer.comment) + "</div>" : "") + "</div>" +
       "</div>" +
-      '<div class="sub">' + esc(offer.author) + " · " + esc(offer.status) + "</div>" +
+      '<div class="sub muted">' + esc(offer.author) + " · " + esc(offer.status) + "</div>" +
       (actions.length ? '<div class="actions">' + actions.join("") + "</div>" : "") +
       "</div>";
   }
 
   async function loadBoard(page) {
     const list = $("board-list");
-    state_(list, "Загружаю доску…");
+    skeletonRows(list, 3);
 
     const data = await api("/api/offers?page=" + page);
     state.boardPage = data.page;
@@ -646,7 +1238,7 @@
     $("board-stat").innerHTML = "<b>" + data.total + "</b> активных объявлений";
 
     if (!data.items.length) {
-      state_(list, "Доска пуста. Создайте объявление во вкладке «Создать».");
+      empty_(list, "📋", "Доска пуста. Создайте объявление во вкладке «Создать».");
     } else {
       list.innerHTML = data.items.map((offer) => offerCard(offer, { acceptable: true })).join("");
     }
@@ -684,12 +1276,12 @@
 
   async function loadMine() {
     const list = $("mine-list");
-    state_(list, "Загружаю…");
+    skeletonRows(list, 2);
     const data = await api("/api/my_offers");
 
     $("mine-stat").innerHTML = "<b>" + data.items.length + "</b> объявлений";
     if (!data.items.length) {
-      state_(list, "Своих объявлений нет. Создайте во вкладке «Создать».");
+      empty_(list, "📂", "Своих объявлений нет. Создайте во вкладке «Создать».");
       return;
     }
     list.innerHTML = data.items.map((offer) => offerCard(offer, { mine: true })).join("");
@@ -722,7 +1314,7 @@
     const items = state.inventoryItems.filter((item) => item.tradable);
 
     if (!items.length) {
-      state_(container, "Нет торгуемых скинов — синхронизируйте инвентарь.");
+      empty_(container, "🔒", "Нет торгуемых скинов — синхронизируйте инвентарь.");
       return;
     }
 
@@ -759,12 +1351,12 @@
     try {
       const data = await api("/api/catalog?q=" + encodeURIComponent(query));
       if (!data.items.length) {
-        $("wanted-results").innerHTML = '<div class="state">Ничего не нашлось. Уточните название или оставьте поле пустым.</div>';
+        empty_($("wanted-results"), "🔍", "Ничего не нашлось. Уточните название или оставьте поле пустым.");
         return;
       }
       $("wanted-results").innerHTML = data.items.map((item, index) =>
-        '<div class="row"><div class="head"><b>' + esc(item.name) + "</b><span class=\"sub\">" +
-        esc(item.price || "") + "</span></div>" +
+        '<div class="row"><div class="head"><b>' + esc(item.name) + "</b>" +
+        '<span class="pill">' + esc(item.price || "цена неизвестна") + "</span></div>" +
         '<div class="actions"><button class="ghost" data-wanted="' + index + '">Выбрать</button></div></div>'
       ).join("");
       $("wanted-results").setAttribute("data-candidates", JSON.stringify(data.items));
@@ -831,8 +1423,8 @@
       ? '<div class="actions"><a class="ghost" href="' + esc(steamLink) + '" target="_blank">🔗 Steam Trade</a></div>'
       : "";
 
-    return '<div class="row"><div class="head"><b>#' + trade.id + "</b><span class=\"sub\">" +
-      esc(trade.status_label) + "</span></div>" +
+    return '<div class="row"><div class="head"><b>#' + trade.id + "</b>" +
+      '<span class="pill">' + esc(trade.status_label) + "</span></div>" +
       '<div class="sub">Вы ' + (trade.role === "buyer" ? "покупатель" : "продавец") +
       " · контрагент " + esc(trade.counterpart) + "</div>" +
       '<div class="sub">Подтверждение: ' + (trade.confirmed ? "✅" : "⏳") +
@@ -851,10 +1443,10 @@
 
   async function loadTrades() {
     const list = $("trades-list");
-    state_(list, "Загружаю сделки…");
+    skeletonRows(list, 2);
     const data = await api("/api/trades");
     if (!data.items.length) {
-      state_(list, "Сделок пока нет. Предложите обмен на доске.");
+      empty_(list, "🔄", "Сделок пока нет. Предложите обмен на доске.");
       return;
     }
 
@@ -863,11 +1455,11 @@
 
     const blocks = [];
     if (incoming.length) {
-      blocks.push('<div class="toolbar"><b>📥 Входящие предложения</b></div>');
+      blocks.push('<div class="toolbar"><div class="title">📥 Входящие предложения</div></div>');
       blocks.push(incoming.map(tradeRow).join(""));
     }
     if (outgoing.length) {
-      blocks.push('<div class="toolbar"><b>📤 Мои предложения по обмену</b></div>');
+      blocks.push('<div class="toolbar"><div class="title">📤 Мои предложения по обмену</div></div>');
       blocks.push(outgoing.map(tradeRow).join(""));
     }
     list.innerHTML = blocks.join("");
@@ -912,17 +1504,17 @@
 
   async function loadRating() {
     const list = $("rating-list");
-    state_(list, "Загружаю…");
+    skeletonRows(list, 3);
     const data = await api("/api/rating");
     $("rating-stat").innerHTML = "<b>" + data.average.toFixed(2) + "</b> ⭐ · отзывов " + data.count;
 
     if (!data.items.length) {
-      state_(list, "Отзывов пока нет — они появляются после завершённых сделок.");
+      empty_(list, "⭐", "Отзывов пока нет — они появляются после завершённых сделок.");
       return;
     }
     list.innerHTML = data.items.map((rating) =>
-      '<div class="row"><div class="head"><b>' + rating.score + " ⭐</b><span class=\"sub\">" +
-      esc(rating.author) + "</span></div>" +
+      '<div class="row"><div class="head"><b>' + rating.score + " ⭐</b>" +
+      '<span class="pill">' + esc(rating.author) + "</span></div>" +
       '<div class="sub">' + esc(rating.comment || "без комментария") + "</div></div>"
     ).join("");
   }
@@ -937,8 +1529,8 @@
 
     const users = await api("/api/admin/users");
     $("admin-users").innerHTML = users.items.map((user) =>
-      '<div class="row"><div class="head"><b>' + esc(user.telegram_id) + "</b><span class=\"sub\">" +
-      esc("@" + (user.username || "—")) + "</span></div>" +
+      '<div class="row"><div class="head"><b>' + esc(user.telegram_id) + "</b>" +
+      '<span class="pill">' + esc("@" + (user.username || "—")) + "</span></div>" +
       '<div class="sub">' + esc(user.first_name || "—") + " · " + (user.steam ? "Steam ✅" : "Steam ❌") +
       " · " + (user.banned ? "🔴 бан" : "🟢 активен") + " · " + Number(user.rating).toFixed(1) + " ⭐ · " +
       user.trades + " сделок</div>" +
@@ -949,10 +1541,10 @@
     const disputes = await api("/api/admin/disputes");
     $("admin-disputes").innerHTML = disputes.items.length
       ? disputes.items.map((dispute) =>
-          '<div class="row"><div class="head"><b>#' + dispute.id + "</b><span class=\"sub\">сделка #" +
-          dispute.trade_id + "</span></div><div class=\"sub\">" + esc(dispute.author) + " · " +
-          esc(dispute.reason) + '</div><div class="actions"><button class="ghost" data-resolve="' +
-          dispute.id + '">Решить</button></div></div>'
+          '<div class="row"><div class="head"><b>#' + dispute.id + "</b>" +
+          '<span class="pill">сделка #' + dispute.trade_id + "</span></div>" +
+          '<div class="sub">' + esc(dispute.author) + " · " + esc(dispute.reason) + "</div>" +
+          '<div class="actions"><button class="ghost" data-resolve="' + dispute.id + '">Решить</button></div></div>'
         ).join("")
       : '<div class="state">Открытых споров нет</div>';
   }

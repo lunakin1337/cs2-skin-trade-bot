@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from aiogram import Bot
 from aiohttp import web
@@ -21,9 +21,10 @@ from bot.utils.skin_categories import CATEGORY_ORDER, category_title
 from bot.utils.steam import TradeUrl, get_steam_client, SteamError, parse_trade_url
 from bot.utils.telegram_auth import parse_init_data
 from bot.utils.validators import validate_steam_id64, validate_trade_url
+from catalog_cache import catalog_version, etag_matches
 from config.settings import BotConfig
 from database.repository import Repositories
-from webapp_context import BOT_KEY, CONFIG_KEY, REPOS_KEY
+from webapp_context import BOT_KEY, CATALOG_CACHE_KEY, CONFIG_KEY, REPOS_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,36 @@ async def _body(request: web.Request) -> dict[str, Any]:
         return await request.json()
     except (json.JSONDecodeError, ValueError):
         return {}
+
+
+# ---------- кэш каталога ----------
+
+
+async def _cached_json(
+    request: web.Request,
+    key: str,
+    build: Callable[[], Awaitable[dict]],
+) -> web.Response:
+    """Отдать JSON каталога из кэша или построить заново, всегда с ETag.
+
+    Каталог одинаков для всех пользователей, поэтому ключ кэша не содержит
+    initData. Ответ помечен `private`, а `If-None-Match` даёт 304 без тела.
+    """
+    ttl = max(0, _config(request).web_cache_ttl)
+    cache = request.app[CATALOG_CACHE_KEY]
+    version = await catalog_version(_repos(request))
+
+    cached = cache.get(key, version, ttl)
+    if cached is None:
+        body = json.dumps(await build(), ensure_ascii=False).encode("utf-8")
+        etag = cache.put(key, version, body)
+    else:
+        etag, body = cached
+
+    headers = {"ETag": etag, "Cache-Control": f"private, max-age={ttl}"}
+    if etag_matches(request.headers.get("If-None-Match"), etag):
+        return web.Response(status=304, headers=headers)
+    return web.Response(body=body, content_type="application/json", headers=headers)
 
 
 # ---------- представление данных ----------
@@ -165,6 +196,7 @@ def _offer_json(offer: dict, items: list[dict], viewer_id: int) -> dict:
                 "short": short_name(item.get("market_hash_name")),
                 "price": item.get("price_steam"),
                 "image": item.get("image_url"),
+                "rarity": item.get("rarity"),
             }
             for item in items
         ],
@@ -302,32 +334,39 @@ async def api_inventory_sync(request: web.Request) -> web.Response:
 # ---------- каталог и предложения ----------
 
 
+async def _catalog_search_payload(request: web.Request, query: str) -> dict:
+    repos = _repos(request)
+    total = await repos.skins.count()
+    if len(query) < 2:
+        return {"items": [], "total": total}
+
+    found = await find_candidates(repos, query, limit=5)
+    rarities = await repos.items.rarity_map([row["market_hash_name"] for row in found])
+    return {
+        "items": [
+            {
+                "name": row["market_hash_name"],
+                "price": row.get("price_text"),
+                "rarity": rarities.get(row["market_hash_name"]),
+            }
+            for row in found
+        ],
+        "total": total,
+    }
+
+
 async def api_catalog(request: web.Request) -> web.Response:
     user = await _api_user(request)
     if user is None:
         return _unauthorized()
 
     query = request.query.get("q", "").strip()
-    if len(query) < 2:
-        return web.json_response({"items": [], "total": await _repos(request).skins.count()})
-
-    found = await find_candidates(_repos(request), query, limit=5)
-    return web.json_response(
-        {
-            "items": [
-                {"name": row["market_hash_name"], "price": row.get("price_text")}
-                for row in found
-            ],
-            "total": await _repos(request).skins.count(),
-        }
+    return await _cached_json(
+        request, f"catalog:{query}", lambda: _catalog_search_payload(request, query)
     )
 
 
-async def api_catalog_tree(request: web.Request) -> web.Response:
-    user = await _api_user(request)
-    if user is None:
-        return _unauthorized()
-
+async def _catalog_tree_payload(request: web.Request) -> dict:
     repos = _repos(request)
     tree = await repos.skins.category_tree()
     order = {code: index for index, code in enumerate(CATEGORY_ORDER)}
@@ -341,7 +380,50 @@ async def api_catalog_tree(request: web.Request) -> web.Response:
         }
         for row in sorted(tree, key=lambda row: order.get(row["category"], 99))
     ]
-    return web.json_response({"total": await repos.skins.count(), "categories": categories})
+    return {"total": await repos.skins.count(), "categories": categories}
+
+
+async def api_catalog_tree(request: web.Request) -> web.Response:
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    return await _cached_json(request, "catalog:tree", lambda: _catalog_tree_payload(request))
+
+
+async def _catalog_items_payload(
+    request: web.Request,
+    category: str | None,
+    weapon: str | None,
+    query: str | None,
+    page: int,
+    size: int,
+) -> dict:
+    repos = _repos(request)
+    total = await repos.skins.count_items(category=category, weapon=weapon, query=query)
+    items = await repos.skins.list_items(
+        category=category, weapon=weapon, query=query, limit=size, offset=page * size
+    )
+    rarities = await repos.items.rarity_map([item["market_hash_name"] for item in items])
+
+    return {
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": max(1, -(-total // size)),
+        "items": [
+            {
+                "name": item["market_hash_name"],
+                "short": short_name(item["market_hash_name"]),
+                "price": item.get("price_text"),
+                "image": item.get("icon_url"),
+                "category": item.get("category"),
+                "weapon": item.get("weapon"),
+                "rarity": rarities.get(item["market_hash_name"]),
+            }
+            for item in items
+        ],
+    }
 
 
 async def api_catalog_items(request: web.Request) -> web.Response:
@@ -362,30 +444,11 @@ async def api_catalog_items(request: web.Request) -> web.Response:
     except ValueError:
         size = 20
 
-    repos = _repos(request)
-    total = await repos.skins.count_items(category=category, weapon=weapon, query=query)
-    items = await repos.skins.list_items(
-        category=category, weapon=weapon, query=query, limit=size, offset=page * size
-    )
-
-    return web.json_response(
-        {
-            "total": total,
-            "page": page,
-            "size": size,
-            "pages": max(1, -(-total // size)),
-            "items": [
-                {
-                    "name": item["market_hash_name"],
-                    "short": short_name(item["market_hash_name"]),
-                    "price": item.get("price_text"),
-                    "image": item.get("icon_url"),
-                    "category": item.get("category"),
-                    "weapon": item.get("weapon"),
-                }
-                for item in items
-            ],
-        }
+    key = f"catalog:items:{category}:{weapon}:{query}:{page}:{size}"
+    return await _cached_json(
+        request,
+        key,
+        lambda: _catalog_items_payload(request, category, weapon, query, page, size),
     )
 
 

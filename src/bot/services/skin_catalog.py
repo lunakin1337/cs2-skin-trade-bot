@@ -7,6 +7,7 @@ import logging
 import aiohttp
 
 from bot.utils.skin_categories import classify
+from catalog_cache import bump_catalog_version
 from database.repository import Repositories
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,8 @@ async def import_catalog(repos: Repositories, pages: int = 30, query: str = "") 
 
             await asyncio.sleep(REQUEST_PAUSE)
 
+    # каталог в Mini App закэширован, импорт обязан сбросить кэши всех процессов
+    await bump_catalog_version(repos)
     return imported
 
 
