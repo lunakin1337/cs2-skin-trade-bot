@@ -14,7 +14,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiohttp import web
 
-from config.settings import BotConfig, load_config
+from bot.services.skin_query_llm import log_llm_status
+from config.settings import BotConfig, load_config, load_llm_config
 from database import Repositories, init_database
 from web_api import register_api_routes
 from webapp_context import (
@@ -122,6 +123,7 @@ async def on_startup(app: web.Application) -> None:
 
     app[CONFIG_KEY] = config
     app[REPOS_KEY] = Repositories(await init_database(str(db_path)))
+    log_llm_status(load_llm_config())
     if BOT_KEY not in app:
         session = AiohttpSession(proxy=config.telegram_proxy) if config.telegram_proxy else None
         app[BOT_KEY] = Bot(token=config.token, session=session, default=DefaultBotProperties(parse_mode=config.parse_mode))
