@@ -25,9 +25,10 @@ from bot.handlers import (
 from bot.middlewares.db import DbMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.throttling import ThrottlingMiddleware
+from bot.services.skin_query_llm import log_llm_status
 from bot.utils.prices import close_price_fetcher
 from bot.utils.steam import close_steam_client
-from config.settings import BotConfig, load_config
+from config.settings import BotConfig, load_config, load_llm_config
 from database import Repositories, init_database
 
 logging.basicConfig(
@@ -80,6 +81,7 @@ def create_dispatcher(config: BotConfig) -> Dispatcher:
 
 async def main() -> None:
     config = load_config()
+    log_llm_status(load_llm_config())
     db = await init_database(config.db_path)
     repos = Repositories(db)
 
