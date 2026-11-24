@@ -1,0 +1,38 @@
+name: Bot Debug
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -e .
+
+      - name: Probe polling for 90 seconds
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          DB_PATH: data/bot.db
+        run: |
+          mkdir -p data
+          cat > /tmp/run_bot.py <<'PYEOF'
+          import logging
+          import runpy
+
+          logging.basicConfig(
+              level=logging.DEBUG,
+              format="%(levelname)s %(name)s: %(message)s",
+          )
+          runpy.run_module("src.bot.main", run_name="__main__")
+          PYEOF
+          timeout 90 python /tmp/run_bot.py || true
