@@ -9,6 +9,7 @@ from .create_offer import router as create_offer_router
 from .trade_flow import router as trade_flow_router
 from .escrow import router as escrow_router
 from .ratings import router as ratings_router
+from .skins import router as skins_router
 
 __all__ = [
     "start_router",
@@ -21,4 +22,5 @@ __all__ = [
     "trade_flow_router",
     "escrow_router",
     "ratings_router",
+    "skins_router",
 ]

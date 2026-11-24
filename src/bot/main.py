@@ -17,6 +17,7 @@ from bot.handlers import (
     offers_router,
     profile_router,
     ratings_router,
+    skins_router,
     start_router,
     trade_flow_router,
     trades_router,
@@ -45,6 +46,7 @@ ROUTERS = (
     trade_flow_router,
     escrow_router,
     ratings_router,
+    skins_router,
     admin_router,
 )
 

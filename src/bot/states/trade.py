@@ -9,7 +9,8 @@ class TradeStates(StatesGroup):
     waiting_offer_title = State()
     waiting_offer_description = State()
     waiting_items_offered = State()
-    waiting_items_wanted = State()
+    waiting_wanted_search = State()
+    waiting_wanted_pick = State()
 
 
 class ProfileStates(StatesGroup):

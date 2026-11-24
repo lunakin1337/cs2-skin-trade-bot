@@ -2,6 +2,7 @@
 
 import aiosqlite
 import json
+import re
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 
@@ -360,6 +361,17 @@ class ItemRepository:
         row = await cur.fetchone()
         return dict(row) if row else None
 
+    async def get_by_ids(self, item_ids: List[int]) -> List[Dict[str, Any]]:
+        """Предметы по списку id (для карточек предложений)."""
+        if not item_ids:
+            return []
+        placeholders = ", ".join("?" for _ in item_ids)
+        cur = await self.db.execute(
+            f"SELECT * FROM items WHERE id IN ({placeholders}) ORDER BY COALESCE(price_steam, 0) DESC",
+            tuple(item_ids),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
     async def apply_prices(self, owner_id: int, prices: Dict[str, float]) -> None:
         """Записать цены Steam для всех предметов пользователя с этими именами."""
         for market_hash_name, price in prices.items():
@@ -409,11 +421,14 @@ class OfferRepository:
         items_wanted: str,
         description: Optional[str] = None,
         price: float = 0.0,
+        wanted_name: Optional[str] = None,
     ) -> int:
         cur = await self.db.execute(
             """
-            INSERT INTO offers (creator_id, title, description, items_offered, items_wanted, price)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO offers (
+                creator_id, title, description, items_offered, items_wanted, price, wanted_name
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 creator_id,
@@ -422,6 +437,7 @@ class OfferRepository:
                 json.dumps(items_offered),
                 items_wanted,
                 price,
+                wanted_name,
             ),
         )
         await self.db.commit()
@@ -454,6 +470,11 @@ class OfferRepository:
         )
         row = await cur.fetchone()
         return dict(row) if row else None
+
+    async def count_active(self) -> int:
+        cur = await self.db.execute("SELECT COUNT(*) AS cnt FROM offers WHERE status = 'active'")
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
 
     async def get_by_creator(self, creator_id: int) -> List[Dict[str, Any]]:
         cur = await self.db.execute(
@@ -712,6 +733,63 @@ class SettingsRepository:
         await self.db.commit()
 
 
+class SkinRepository:
+    """Текстовая база всех скинов CS2 (каталог для «хочу»)."""
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    async def upsert_many(self, skins: List[Dict[str, Any]]) -> int:
+        """Записать/обновить каталог пачкой, вернуть количество строк."""
+        for skin in skins:
+            name = (skin.get("market_hash_name") or "").strip()
+            if not name:
+                continue
+            await self.db.execute(
+                """
+                INSERT INTO skins (market_hash_name, name, price_text, icon_url, updated_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(market_hash_name) DO UPDATE SET
+                    name = excluded.name,
+                    price_text = COALESCE(excluded.price_text, skins.price_text),
+                    icon_url = COALESCE(excluded.icon_url, skins.icon_url),
+                    updated_at = datetime('now')
+                """,
+                (
+                    name,
+                    skin.get("name") or name,
+                    skin.get("price_text"),
+                    skin.get("icon_url"),
+                ),
+            )
+        await self.db.commit()
+        return len(skins)
+
+    async def search(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Поиск по словам: «AWP Asiimov» находит «AWP | Asiimov (Field-Tested)»."""
+        tokens = [token for token in re.split(r"\s+", query.strip()) if token][:5]
+        if not tokens:
+            return []
+
+        condition = " AND ".join("market_hash_name LIKE ?" for _ in tokens)
+        params = [f"%{token}%" for token in tokens]
+        cur = await self.db.execute(
+            f"""
+            SELECT * FROM skins
+            WHERE {condition}
+            ORDER BY LENGTH(market_hash_name), market_hash_name
+            LIMIT ?
+            """,
+            (*params, limit),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
+    async def count(self) -> int:
+        cur = await self.db.execute("SELECT COUNT(*) AS cnt FROM skins")
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
+
 class Repositories:
     """Контейнер всех репозиториев."""
 
@@ -725,3 +803,4 @@ class Repositories:
         self.ratings = RatingRepository(db)
         self.disputes = DisputeRepository(db)
         self.settings = SettingsRepository(db)
+        self.skins = SkinRepository(db)

@@ -68,6 +68,19 @@ async def sync_inventory(
 
     created, updated, removed = await repos.items.sync(user["id"], inventory.rows())
     priced = await refresh_prices(repos, user["id"], inventory)
+
+    # что видели в инвентаре — попадает в каталог для «хочу»
+    await repos.skins.upsert_many(
+        [
+            {
+                "market_hash_name": item.market_hash_name,
+                "name": item.name,
+                "icon_url": item.icon_url,
+            }
+            for item in inventory.items
+            if item.market_hash_name
+        ]
+    )
     await repos.users.touch_inventory_sync(user["id"])
 
     return {

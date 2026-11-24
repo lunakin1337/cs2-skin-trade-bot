@@ -13,17 +13,25 @@ ACTIVE_TRADE_STATUSES = {"pending", "confirmed", "in_escrow"}
 
 def main_menu_keyboard(web_app_url: Optional[str] = None) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="🎒 Инвентарь", callback_data="inventory")],
         [
-            InlineKeyboardButton(text="📋 Предложения", callback_data="offers"),
-            InlineKeyboardButton(text="🔄 Мои сделки", callback_data="trades"),
+            InlineKeyboardButton(text="👤 Профиль", callback_data="profile"),
+            InlineKeyboardButton(text="🎒 Инвентарь", callback_data="inventory"),
         ],
-        [InlineKeyboardButton(text="📝 Создать предложение", callback_data="create_offer")],
+        [
+            InlineKeyboardButton(text="📝 Создать предложение", callback_data="create_offer"),
+            InlineKeyboardButton(text="📂 Мои предложения", callback_data="my_offers"),
+        ],
+        [InlineKeyboardButton(text="📋 Доска", callback_data="board")],
+        [InlineKeyboardButton(text="🔄 История сделок", callback_data="trades")],
     ]
+
+    last_row = []
     if web_app_url and web_app_url.startswith("https://"):
-        rows.append([InlineKeyboardButton(text="🌐 Приложение", web_app=WebAppInfo(url=web_app_url))])
-    rows.append([InlineKeyboardButton(text="❓ Помощь", callback_data="help")])
+        last_row.append(
+            InlineKeyboardButton(text="🌐 Приложение", web_app=WebAppInfo(url=web_app_url))
+        )
+    last_row.append(InlineKeyboardButton(text="❓ Помощь", callback_data="help"))
+    rows.append(last_row)
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -73,13 +81,44 @@ def inventory_keyboard(has_steam: bool, page: int = 0, pages: int = 1) -> Inline
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def offers_keyboard(offers: Iterable[dict]) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=f"Принять #{offer['id']}", callback_data=f"accept_offer_{offer['id']}")]
+def board_keyboard(offers: Iterable[dict], page: int, pages: int) -> InlineKeyboardMarkup:
+    offers = list(offers)
+    rows: list[list[InlineKeyboardButton]] = []
+
+    accept = [
+        InlineKeyboardButton(text=f"🤝 Принять #{offer['id']}", callback_data=f"accept_offer_{offer['id']}")
         for offer in offers
+    ]
+    for index in range(0, len(accept), 2):
+        rows.append(accept[index:index + 2])
+
+    navigation: list[InlineKeyboardButton] = []
+    if page > 0:
+        navigation.append(InlineKeyboardButton(text="◀️", callback_data=f"board_{page - 1}"))
+    if pages > 1:
+        navigation.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data="board_noop"))
+    if page + 1 < pages:
+        navigation.append(InlineKeyboardButton(text="▶️", callback_data=f"board_{page + 1}"))
+    if navigation:
+        rows.append(navigation)
+
+    rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def my_offers_keyboard(offers: Iterable[dict]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=f"🗑 Снять #{offer['id']}", callback_data=f"offer_cancel_{offer['id']}")]
+        for offer in offers
+        if offer.get("status") == "active"
     ]
     rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def offers_keyboard(offers: Iterable[dict]) -> InlineKeyboardMarkup:
+    """Кнопки для списка предложений без карточек (совместимость)."""
+    return board_keyboard(offers, page=0, pages=1)
 
 
 def trades_keyboard(trades: Iterable[dict], viewer_id: int) -> InlineKeyboardMarkup:
@@ -106,9 +145,7 @@ def trades_keyboard(trades: Iterable[dict], viewer_id: int) -> InlineKeyboardMar
                 "seller_trade_url" if role == "buyer" else "buyer_trade_url"
             )
             if counterpart_url:
-                rows.append(
-                    [InlineKeyboardButton(text=f"🔗 Обмен #{trade_id}", url=counterpart_url)]
-                )
+                rows.append([InlineKeyboardButton(text=f"🔗 Обмен #{trade_id}", url=counterpart_url)])
             if not trade.get(f"{role}_completed_at"):
                 rows.append(
                     [

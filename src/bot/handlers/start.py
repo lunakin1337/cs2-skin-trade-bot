@@ -18,7 +18,7 @@ WELCOME_TEXT = (
     "1. Привяжите Steam аккаунт и Trade URL в профиле\n"
     "2. Синхронизируйте инвентарь — подтянем скины и цены\n"
     "3. Создавайте предложения обмена или принимайте чужие\n\n"
-    "Команды: /profile · /inventory · /offers · /trades"
+    "Команды: /board · /create_offer · /my_offers · /trades"
 )
 
 MENU_TEXT = (

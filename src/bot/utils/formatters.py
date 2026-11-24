@@ -5,6 +5,7 @@ from urllib.parse import quote
 from bot.utils.steam import TradeUrl, build_image_url
 
 MARKET_LISTINGS_URL = "https://steamcommunity.com/market/listings/730/"
+NEWLINE = chr(10)
 
 
 def format_price(price: float | None) -> str:
@@ -154,3 +155,75 @@ def format_trade(trade: dict, viewer_id: int) -> str:
         received = "✅" if trade.get(f"{role}_completed_at") else "⏳"
         lines.append(f"   Скины получены: {received}")
     return "\n".join(lines)
+
+
+CARD_COLUMN = 18
+CARD_INNER = CARD_COLUMN * 2 + 1
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    words = str(text).split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        if not current:
+            current = word
+        elif len(current) + 1 + len(word) <= width:
+            current = f"{current} {word}"
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return [line[:width] for line in lines] or [""]
+
+
+def _pad(text: str, width: int) -> str:
+    text = str(text)[:width]
+    return text + " " * (width - len(text))
+
+
+def format_offer_card(offer: dict, offered_items: list, index: int) -> str:
+    """Карточка предложения: слева что отдаёт, справа что хочет, снизу комментарий."""
+    left: list[str] = []
+    for item in offered_items[:3]:
+        left.extend(_wrap(item.get("market_hash_name") or "—", CARD_COLUMN))
+    if len(offered_items) > 3:
+        left.append(f"+{len(offered_items) - 3} ещё")
+
+    total = sum(float(item.get("price_steam") or 0) for item in offered_items)
+    if total:
+        left.append(format_price(total))
+
+    if offer.get("description"):
+        left.extend(_wrap(offer["description"], CARD_COLUMN))
+
+    wanted = offer.get("wanted_name") or offer.get("items_wanted") or "—"
+    right = _wrap(wanted, CARD_COLUMN)
+
+    height = max(len(left), len(right))
+    left += [""] * (height - len(left))
+    right += [""] * (height - len(right))
+
+    user = f"@{offer.get('username') or '—'}"
+    rating = f"{float(offer.get('rating') or 0):.1f}⭐"
+    footer = _wrap(f"#{offer['id']} · {user} · {rating}", CARD_INNER)
+
+    frame_top = "┌" + "─" * CARD_COLUMN + "┬" + "─" * CARD_COLUMN + "┐"
+    frame_mid = "├" + "─" * CARD_COLUMN + "┼" + "─" * CARD_COLUMN + "┤"
+    frame_split = "├" + "─" * CARD_INNER + "┤"
+    frame_bottom = "└" + "─" * CARD_INNER + "┘"
+
+    rows = [
+        frame_top,
+        f"│{_pad('ОТДАЮ', CARD_COLUMN)}│{_pad('ХОЧУ', CARD_COLUMN)}│",
+        frame_mid,
+    ]
+    rows.extend(
+        f"│{_pad(left_line, CARD_COLUMN)}│{_pad(right_line, CARD_COLUMN)}│"
+        for left_line, right_line in zip(left, right)
+    )
+    rows.append(frame_split)
+    rows.extend(f"│{_pad(line, CARD_INNER)}│" for line in footer)
+    rows.append(frame_bottom)
+    return NEWLINE.join(rows)

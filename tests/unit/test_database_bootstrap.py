@@ -15,7 +15,7 @@ class TestInitDatabase:
 
             cur = await db.execute("SELECT name FROM migrations ORDER BY id")
             applied = [row["name"] for row in await cur.fetchall()]
-            assert applied == ["001_initial", "002_steam", "003_trade_flow"]
+            assert applied == ["001_initial", "002_steam", "003_trade_flow", "004_offers_board"]
         finally:
             await db.close()
 

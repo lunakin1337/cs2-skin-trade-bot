@@ -119,12 +119,19 @@ class TestInventory:
 
 
 class TestOffers:
-    async def test_offers_empty(self, bot, session, repos):
-        from bot.handlers.offers import cmd_offers
+    async def test_board_empty(self, bot, session, repos):
+        from bot.handlers.offers import cmd_board
 
-        await cmd_offers(make_message(bot, "/offers"), repos)
+        await cmd_board(make_message(bot, "/board"), repos)
 
-        assert "предложений обмена нет" in last_text(session)
+        assert "доска пуста" in last_text(session)
+
+    async def test_my_offers_empty(self, bot, session, repos):
+        from bot.handlers.offers import cmd_my_offers
+
+        await cmd_my_offers(make_message(bot, "/my_offers"), repos)
+
+        assert "нет объявлений" in last_text(session)
 
     async def test_accept_own_offer_denied(self, bot, session, repos, test_user):
         from bot.handlers.trade_flow import cb_accept_offer
