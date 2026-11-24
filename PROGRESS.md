@@ -1,0 +1,161 @@
+# Память проекта: CS2 Skin Trade Bot
+
+Файл для быстрого входа в контекст — что построено, как устроено, где лежат решения и
+что осталось. Дополняется по ходу работы. Технические шаги запуска — в
+[INSTRUCTIONS.md](INSTRUCTIONS.md).
+
+**Версия:** 0.1 (тег `v0.1`) + правки после тега (сделки, каталог, встречные предложения).
+**Репозиторий:** github.com/lunakin1337/cs2-skin-trade-bot (публичный).
+**Бот:** `@Cs2_p2pbot` (`cs 2 test`, id 9142832309).
+**Владелец/админ:** Telegram id `8851272459` — только ему доступна админка.
+
+## Что это
+
+P2P-обмен скинами CS2 в Telegram: привязка Steam и Trade URL, инвентарь с картинками и
+ценами, доска объявлений с каталогом по разделам, сделки с двумя подтверждениями и
+ссылкой Steam Trade с предзаполненными скинами, оценки и админка. Всё то же живёт в
+Telegram Mini App.
+
+## Стек и структура
+
+- aiogram 3.34, SQLite (aiosqlite), aiohttp; Python 3.11+
+- Тесты: pytest (113 зелёных), линт ruff; CI в GitHub Actions
+- src-layout: пакеты `bot`, `config`, `database` из `src/`
+
+```
+src/
+  config/settings.py          конфиг из .env (BotConfig), прокси для Bot API
+  database/
+    repository.py             Database + репозитории: users, items, offers, trades,
+                              trade_items, ratings, disputes, settings, skins
+    migrations/               001_initial … 006_skin_categories (единственный источник схемы)
+  bot/
+    main.py                   запуск polling, ожидание Bot API, middleware
+    handlers/                 start, profile, inventory, catalog-скины, offers, create_offer,
+                              trades, trade_flow, escrow, ratings, admin, skins
+    services/                 inventory_sync, skin_catalog (импорт), skin_search,
+                              trades (ссылки Steam + детали сделки)
+    utils/                    steam, prices, formatters, validators, telegram_auth,
+                              skin_query (разбор «хочу»), skin_categories, users
+  web_app.py                  отдаёт Mini App и /stats, поднимает API
+  web_api.py                  JSON API для Mini App (initData + админка)
+  webapp/app.html             сам Mini App (SPA на ванильном JS)
+  webapp_context.py           ключи состояния aiohttp
+scripts/refresh_webapp_url.py обновляет WEB_APP_URL по логу cloudflared
+```
+
+## Модель данных (кратко)
+
+- `users` — Telegram-профиль, Steam: `steam_id`, `steam_persona`, `steam_avatar_url`,
+  `steam_profile_url`, `steam_trade_url`, `steam_trade_partner`, `steam_trade_token`,
+  `inventory_synced_at`, `rating`, `trades_count`, `is_banned`
+- `items` — инвентарь: `steam_asset_id`, `market_hash_name`, `class_id`, `instance_id`,
+  `rarity`, `exterior`, `image_url`, `icon_url`, `price_steam`, `is_tradable`, `synced_at`;
+  уникальный индекс `(owner_id, steam_asset_id)`
+- `offers` — объявления: `items_offered` (JSON id предметов), `wanted_name` (скин из
+  каталога), `items_wanted` (свободный текст), `status` (active / in_trade / completed /
+  cancelled), `description`
+- `trades` — сделки: `buyer_id`, `seller_id`, `offer_id`, `status` (pending → confirmed →
+  in_escrow → completed / cancelled), отметки `buyer_confirmed_at` / `seller_confirmed_at`,
+  `buyer_completed_at` / `seller_completed_at`
+- `trade_items` — какие предметы кто отдаёт (`from_user_id` → `to_user_id`)
+- `ratings` — оценки 1–5, уникальность `(trade_id, from_user_id)`
+- `skins` — каталог CS2: `market_hash_name`, `price_text`, `price_value`, `icon_url`,
+  `category`, `weapon`
+
+## Как устроены ключевые потоки
+
+**Инвентарь.** Берётся из публичного `steamcommunity.com/inventory/<steamid64>/730/2` с
+пагинацией: имена, теги (редкость, износ, тип), хеши картинок. API-ключ не нужен, инвентарь
+должен быть открыт. Торговый кулдаун определяется по `owner_descriptions`
+(«Tradable After …», «Обмен возможен после…») — такие предметы сохраняются с
+`is_tradable = 0` и не попадают в офферы. `ItemRepository.sync` делает upsert по
+`(owner_id, steam_asset_id)` и удаляет то, что исчезло из Steam.
+
+**Профиль Steam.** `ISteamUser/GetPlayerSummaries` по `STEAM_API_KEY` — имя, аватар, ссылка.
+Trade URL парсится в `partner` + `token` и хранится нормализованным.
+
+**Каталог.** Импорт из Steam Community Market (`/market/search/render/`, страницы по факту
+~10 позиций, пауза 2 с, при 429 пауза 45 с). Классификатор `utils/skin_categories.py`
+раскладывает по категориям (винтовки, снайперские, ПП, пистолеты, тяжёлое, ножи, перчатки,
+агенты, zeus, стикеры, граффити, музыка, кейсы) и определяет оружие; понимает префиксы
+`StatTrak™` и `Souvenir`. Каталог пополняется ещё и при синхронизации инвентаря.
+
+**Поиск «хочу».** `utils/skin_query.py` разбирает свободный текст: синонимы и русские
+названия («асимов» → Asiimov, «керамбит» → Karambit, «катовице» → Katowice, «нож» → ★),
+транслитерация, износ кодами (FN/MW/FT/WW/BS, «мв», «фт»), цена («до 100$», «500 баксов»),
+StatTrak. `services/skin_search.py` ищет по шагам: с износом и ценой → без цены → без
+износа → без категории ★ → fuzzy по `difflib`, причём в названии обязан быть якорь
+(самое длинное слово запроса), чтобы не подсунуть случайный скин.
+
+**Создание объявления (3 шага, бот и Mini App).** 1) выбрать свои скины (нумерация 1..N
+совпадает с `/inventory`, настоящие id спрятаны в состоянии FSM); 2) описать желание
+словами, бот ищет в каталоге; 3) подтвердить черновик. Название собирается автоматически:
+«★ Ursus Knife | Ultraviolet → AWP | Asiimov».
+
+**Сделки (актуальная модель).**
+1. Доска показывает объявления с карточками «отдаю / хочу».
+2. Второй человек жмёт «🤝 Предложить обмен», выбирает свои скины из инвентаря и отправляет
+   встречное — в сделку попадают предметы обеих сторон.
+3. Подтверждение инициатора ставится автоматически (`buyer_confirmed_at` в момент создания).
+4. У автора объявления это видно во «📥 Входящие предложения»; он подтверждает
+   (`seller_confirmed_at`).
+5. Когда подтвердили оба — статус `in_escrow` и появляется кнопка **«🔗 Steam Trade»**:
+   ссылка на Trade URL контрагента с параметром `items` (JSON скинов этой стороны), поэтому
+   предметы уже стоят в окне обмена.
+6. После обмена каждая сторона жмёт «📦 Получил»; когда отметили оба — `completed`,
+   растут счётчики сделок, можно поставить оценку 1–5 (средний рейтинг пересчитывается,
+   контрагент получает уведомление).
+7. Отмена доступна до получения скинов, объявление возвращается на доску.
+
+**Mini App.** `src/webapp/app.html` — табы: Инвентарь, Каталог, Доска, Создать, Мои, Сделки,
+Профиль, Рейтинг, Админ (только для 8851272459), Помощь. Авторизация: `initData`
+проверяется HMAC-SHA256 от `BOT_TOKEN` (`utils/telegram_auth.py`), без подписи `/api/*`
+отвечает 401. Админка закрыта и в интерфейсе, и на сервере.
+
+**API Mini App:** `/api/me`, `/api/profile/steam`, `/api/profile/refresh`, `/api/inventory`,
+`/api/inventory/sync`, `/api/catalog`, `/api/catalog/tree`, `/api/catalog/items`,
+`/api/offers` (GET доска, POST создание), `/api/my_offers`, `/api/offers/{id}/accept|cancel|
+delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api/rating`,
+`/api/admin/{stats|users|ban|disputes|disputes/{id}/resolve}`.
+
+## Инфраструктура и запуск (что где живёт)
+
+- Bot API с домашней сети заблокирован провайдером. Работает только через прокси:
+  локальный Xray (VLESS) на `127.0.0.1:10808`, бот ходит через `TELEGRAM_PROXY`.
+- Mini App требует HTTPS: используется `cloudflared tunnel --url http://localhost:8080`,
+  адрес попадает в `WEB_APP_URL` (меняется при каждом перезапуске туннеля —
+  `scripts/refresh_webapp_url.py`).
+- `start_all.bat` поднимает всё: Xray → веб-приложение → туннель → обновление `.env` → бот.
+- Резервные workflow: `ci.yml` (ruff + pytest), `bot-live.yml` (поллинг на раннере, только
+  вручную), `deploy.yml` (деплой на VPS, только вручную).
+
+## Грабли, на которые уже наступали
+
+- **Несколько поллеров одновременно** → `TelegramConflictError` и штраф на токен. Всегда
+  проверять, что запущен ровно один `bot.main`, и не включать расписание `bot-live`
+  параллельно с локальным ботом.
+- **Общий IP + Bot API** (WARP, раннеры GitHub) → `429 Flood control`. Домашний IP вообще
+  блокируется провайдером, поэтому нужен именно Xray/свой прокси.
+- **Токен в публичном репозитории** был подобран и использован для спама. `.env` в
+  `.gitignore`, `.env.example` пустой, токены — только в `.env` и секретах GitHub.
+- **Схема только в миграциях**, `models.py` удалён. `init_database` создаёт каталог базы.
+- **HTML в Telegram** требует `parse_mode=HTML` (было забыто — теги выводились текстом).
+- **Сломанный JS в Mini App** = «вечная загрузка»: страница грузится, но ничего не работает.
+  Защита — тест, который парсит встроенный скрипт через esprima (`tests/unit/test_mini_app.py`).
+- **Дубли обработчиков** на один callback/команду → работает только первый зарегистрированный
+  роутер.
+- **id предмета** — это `items.id` из базы (не Steam asset id). Нумерация в интерфейсе
+  отдельная, 1..N, и совпадает между `/inventory` и шагом выбора скинов.
+
+## Что осталось / идеи дальше
+
+1. Оформление Mini App: палитра, шрифты, карточки, скелетоны загрузки.
+2. Скорость: кэш ответов API и предзагрузка соседних страниц каталога.
+3. ИИ-разбор совсем странных запросов («как у стримера, но дешевле») как дополнение к
+   локальному матчеру — нужен ключ или локальная модель.
+4. Автоматическая отправка Steam Trade Offer из бота (нужна сессия Steam бота: cookies +
+   shared_secret), сейчас ссылка с предзаполнением.
+5. Почистить историю git от отозванных токенов (`git filter-repo`) — по согласованию.
+6. Убрать мусорные тестовые сделки (в базе были сделки с продавцом-ботом).
+7. Споры: сейчас только просмотр и решение админом, нет создания спора пользователем из UI.
