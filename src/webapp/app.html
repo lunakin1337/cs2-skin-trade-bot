@@ -817,6 +817,9 @@
         actions.push('<div class="stars" data-rate="' + trade.id + '">' +
           [1, 2, 3, 4, 5].map((score) => '<button data-score="' + score + '">' + score + "</button>").join("") +
           "</div>");
+      } else if (action.name === "dispute") {
+        actions.push('<button class="ghost danger" data-dispute="' + trade.id + '">' +
+          action.label + "</button>");
       } else {
         actions.push('<button class="ghost" data-trade="' + trade.id + '" data-action="' + action.name + '">' +
           action.label + "</button>");
@@ -834,6 +837,7 @@
       " · контрагент " + esc(trade.counterpart) + "</div>" +
       '<div class="sub">Подтверждение: ' + (trade.confirmed ? "✅" : "⏳") +
       " · получение: " + (trade.received ? "✅" : "⏳") + "</div>" +
+      (trade.dispute_open ? '<div class="sub">⚖️ Открыт спор — ждём решения администратора</div>' : "") +
       (trade.my_items && trade.my_items.length
         ? '<div class="sub">Отдаёте: ' + trade.my_items.map((item) => esc(item.name)).join(", ") + "</div>"
         : "") +
@@ -872,7 +876,18 @@
   $("trades-list").addEventListener("click", async (event) => {
     const button = event.target.closest("[data-trade]");
     const star = event.target.closest("[data-score]");
+    const dispute = event.target.closest("[data-dispute]");
     try {
+      if (dispute) {
+        const tradeId = dispute.getAttribute("data-dispute");
+        const reason = prompt("Что пошло не так в сделке #" + tradeId + "? Опишите ситуацию для администратора:", "");
+        if (reason === null) return;
+        const result = await api("/api/trades/" + tradeId + "/dispute", { method: "POST", body: { reason: reason } });
+        notice("Спор #" + result.dispute_id + " открыт — администратор уведомлён.", "ok");
+        await loadTrades();
+        await loadMe();
+        return;
+      }
       if (button) {
         const tradeId = button.getAttribute("data-trade");
         const action = button.getAttribute("data-action");

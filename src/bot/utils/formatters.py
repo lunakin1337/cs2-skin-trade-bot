@@ -181,6 +181,8 @@ def format_trade(trade: dict, viewer_id: int) -> str:
         f"   Вы {'покупатель' if is_buyer else 'продавец'} · контрагент @{counterpart}",
         f"   Подтверждения: {', '.join(confirmations)}",
     ]
+    if trade.get("dispute_open"):
+        lines.append("   ⚖️ Открыт спор — ждём решения администратора")
     if trade["status"] in {"in_escrow", "completed"}:
         received = "✅" if trade.get(f"{role}_completed_at") else "⏳"
         lines.append(f"   Скины получены: {received}")

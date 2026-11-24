@@ -1,7 +1,9 @@
 """Unit-тесты для репозиториев."""
 
-import pytest
 import json
+import sqlite3
+
+import pytest
 
 
 class TestUserRepository:
@@ -302,6 +304,23 @@ class TestDisputeRepository:
         disputes = await repos.disputes.get_open()
         assert len(disputes) == 1
         assert disputes[0]["reason"] == "Seller didn't send items"
+
+    @pytest.mark.asyncio
+    async def test_only_one_open_dispute_per_trade(self, repos, test_user, test_user2):
+        trade_id = await repos.trades.create(buyer_id=test_user["id"], seller_id=test_user2["id"])
+        first = await repos.disputes.create(trade_id=trade_id, opened_by=test_user["id"], reason="раз")
+
+        open_dispute = await repos.disputes.get_open_by_trade(trade_id)
+        assert open_dispute["id"] == first
+
+        with pytest.raises(sqlite3.IntegrityError):
+            await repos.disputes.create(trade_id=trade_id, opened_by=test_user2["id"], reason="два")
+
+        await repos.disputes.resolve(first, "решение")
+        assert await repos.disputes.get_open_by_trade(trade_id) is None
+
+        second = await repos.disputes.create(trade_id=trade_id, opened_by=test_user2["id"], reason="три")
+        assert second != first
 
     @pytest.mark.asyncio
     async def test_resolve_dispute(self, repos, test_user, test_user2):

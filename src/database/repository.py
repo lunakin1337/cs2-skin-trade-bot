@@ -704,6 +704,14 @@ class DisputeRepository:
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def get_open_by_trade(self, trade_id: int) -> Optional[Dict[str, Any]]:
+        cur = await self.db.execute(
+            "SELECT * FROM disputes WHERE trade_id = ? AND status = 'open'",
+            (trade_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
     async def resolve(self, dispute_id: int, admin_note: str) -> None:
         await self.db.execute(
             """

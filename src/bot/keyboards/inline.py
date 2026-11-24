@@ -8,6 +8,8 @@ from aiogram.types import (
     WebAppInfo,
 )
 
+from bot.services.disputes import DISPUTE_STATUSES
+
 ACTIVE_TRADE_STATUSES = {"pending", "confirmed", "in_escrow"}
 
 
@@ -172,6 +174,16 @@ def trades_keyboard(trades: Iterable[dict], viewer_id: int) -> InlineKeyboardMar
                         )
                     ]
                 )
+
+        if status in DISPUTE_STATUSES and not trade.get("dispute_open"):
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"⚠️ Открыть спор #{trade_id}",
+                        callback_data=f"trade_dispute_{trade_id}",
+                    )
+                ]
+            )
 
         if status in ACTIVE_TRADE_STATUSES:
             rows.append(

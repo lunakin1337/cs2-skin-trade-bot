@@ -9,12 +9,21 @@ import logging
 import os
 from pathlib import Path
 
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiohttp import web
 
 from config.settings import BotConfig, load_config
 from database import Repositories, init_database
 from web_api import register_api_routes
-from webapp_context import CONFIG_KEY, CONFIG_OVERRIDE_KEY, DB_PATH_OVERRIDE_KEY, REPOS_KEY
+from webapp_context import (
+    BOT_KEY,
+    CONFIG_KEY,
+    CONFIG_OVERRIDE_KEY,
+    DB_PATH_OVERRIDE_KEY,
+    REPOS_KEY,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -113,6 +122,9 @@ async def on_startup(app: web.Application) -> None:
 
     app[CONFIG_KEY] = config
     app[REPOS_KEY] = Repositories(await init_database(str(db_path)))
+    if BOT_KEY not in app:
+        session = AiohttpSession(proxy=config.telegram_proxy) if config.telegram_proxy else None
+        app[BOT_KEY] = Bot(token=config.token, session=session, default=DefaultBotProperties(parse_mode=config.parse_mode))
     logger.info("Веб-приложение готово, база: %s", db_path)
 
 
@@ -120,6 +132,9 @@ async def on_cleanup(app: web.Application) -> None:
     repos: Repositories | None = app.get(REPOS_KEY)
     if repos is not None:
         await repos.db.close()
+    bot: Bot | None = app.get(BOT_KEY)
+    if bot is not None:
+        await bot.session.close()
 
 
 def create_app(
