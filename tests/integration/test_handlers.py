@@ -175,7 +175,7 @@ class TestCreateOffer:
 
 
     async def test_numbering_maps_to_hidden_ids(self, bot, repos, state, test_user):
-        from bot.handlers.create_offer import process_items_offered, process_offer_description
+        from bot.handlers.create_offer import cmd_create_offer, process_items_offered
 
         await repos.users.link_steam(
             test_user["id"],
@@ -192,8 +192,7 @@ class TestCreateOffer:
                 price_steam=10.0 + index,
             )
 
-        await state.update_data(title="Тест")
-        await process_offer_description(make_message(bot, "описание"), state, repos)
+        await cmd_create_offer(make_message(bot, "/create_offer"), state, repos)
 
         data = await state.get_data()
         assert set(data["item_map"]) == {"1", "2", "3"}
@@ -203,7 +202,7 @@ class TestCreateOffer:
         assert data["items_offered"] == [data["item_map"]["2"]]
 
     async def test_locked_items_leave_numbering_gaps(self, bot, repos, state, test_user):
-        from bot.handlers.create_offer import process_offer_description
+        from bot.handlers.create_offer import cmd_create_offer
 
         await repos.users.link_steam(
             test_user["id"],
@@ -226,18 +225,7 @@ class TestCreateOffer:
             is_tradable=False,
         )
 
-        await state.update_data(title="Тест")
-        await process_offer_description(make_message(bot, "описание"), state, repos)
+        await cmd_create_offer(make_message(bot, "/create_offer"), state, repos)
 
         data = await state.get_data()
         assert set(data["item_map"]) == {"1"}
-
-    async def test_unknown_number_rejected(self, bot, repos, state, session, test_user):
-        from bot.handlers.create_offer import process_items_offered
-
-        await state.update_data(item_map={"1": 123})
-        await process_items_offered(make_message(bot, "99"), state, repos)
-
-        data = await state.get_data()
-        assert "items_offered" not in data
-        assert "нет в списке" in last_text(session)

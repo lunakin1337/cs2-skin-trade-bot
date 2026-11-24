@@ -180,6 +180,15 @@ def trades_keyboard(trades: Iterable[dict], viewer_id: int) -> InlineKeyboardMar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def draft_keyboard(has_candidates: bool = True) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="✅ Опубликовать", callback_data="draft_publish")],
+        [InlineKeyboardButton(text="🔁 Другой вариант", callback_data="draft_retry")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="draft_cancel")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def rating_keyboard(trade_id: int) -> InlineKeyboardMarkup:
     scores = [
         InlineKeyboardButton(text=f"{score}⭐", callback_data=f"rate_{trade_id}_{score}")

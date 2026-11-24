@@ -4,13 +4,11 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class TradeStates(StatesGroup):
-    """Создание предложения обмена."""
+    """Создание предложения обмена за три шага."""
 
-    waiting_offer_title = State()
-    waiting_offer_description = State()
     waiting_items_offered = State()
-    waiting_wanted_search = State()
-    waiting_wanted_pick = State()
+    waiting_wanted = State()
+    waiting_confirm = State()
 
 
 class ProfileStates(StatesGroup):

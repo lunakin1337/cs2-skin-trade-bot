@@ -19,10 +19,13 @@ REQUEST_TIMEOUT = 20
 
 def _row(result: dict) -> dict:
     name = (result.get("hash_name") or result.get("name") or "").strip()
+    price_cents = result.get("sell_price")
+    price_value = round(price_cents / 100, 2) if isinstance(price_cents, (int, float)) else None
     return {
         "market_hash_name": name,
         "name": result.get("name") or name,
         "price_text": (result.get("sell_price_text") or "").strip() or None,
+        "price_value": price_value,
         "icon_url": result.get("app_icon"),
     }
 

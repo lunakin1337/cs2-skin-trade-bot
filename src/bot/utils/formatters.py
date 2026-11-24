@@ -1,5 +1,6 @@
 """Форматирование текстов для сообщений бота."""
 
+import re
 from urllib.parse import quote
 
 from bot.utils.steam import TradeUrl, build_image_url
@@ -66,6 +67,14 @@ def _trade_url_hint(user: dict) -> str:
     if user.get("steam_trade_url"):
         return "✅ указан"
     return "❌ не указан"
+
+
+def short_name(market_hash_name: str | None, limit: int = 32) -> str:
+    """Название без износа в скобках — для заголовков предложений."""
+    if not market_hash_name:
+        return "—"
+    name = re.sub(r"\s*\([^)]*\)\s*$", "", market_hash_name).strip()
+    return name[:limit]
 
 
 def format_item(item: dict, index: int | None = None) -> str:

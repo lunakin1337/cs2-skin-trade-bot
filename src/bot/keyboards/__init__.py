@@ -2,6 +2,7 @@
 
 from .inline import (
     back_to_main_keyboard,
+    draft_keyboard,
     inventory_keyboard,
     main_menu_keyboard,
     offers_keyboard,
@@ -12,6 +13,7 @@ from .inline import (
 
 __all__ = [
     "back_to_main_keyboard",
+    "draft_keyboard",
     "inventory_keyboard",
     "main_menu_keyboard",
     "offers_keyboard",

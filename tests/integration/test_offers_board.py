@@ -3,14 +3,14 @@
 import pytest
 
 from bot.handlers.create_offer import (
+    cb_draft_publish,
     process_items_offered,
-    process_wanted_pick,
-    process_wanted_search,
+    process_wanted,
 )
 from bot.handlers.offers import board_view, my_offers_view
 from bot.states.trade import TradeStates
 from bot.utils.formatters import CARD_INNER, format_offer_card
-from tests.helpers import last_text, make_message
+from tests.helpers import last_text, make_callback, make_message
 
 BOT_ID = 123456789
 
@@ -98,46 +98,65 @@ class TestBoard:
 
 
 class TestWantedCatalog:
-    async def test_search_and_pick_skin(self, bot, repos, state, seller):
+    async def test_free_text_finds_skin_and_publishes(self, bot, repos, state, seller):
         await repos.skins.upsert_many(
             [
-                {"market_hash_name": "AWP | Asiimov (Field-Tested)", "price_text": "$118.90"},
-                {"market_hash_name": "AWP | Neo-Noir (Minimal Wear)", "price_text": "$64.10"},
+                {"market_hash_name": "AWP | Asiimov (Field-Tested)", "price_text": "$118.90", "price_value": 118.9},
+                {"market_hash_name": "AWP | Asiimov (Minimal Wear)", "price_text": "$220.00", "price_value": 220.0},
             ]
         )
-        await repos.items.add(
+        item_id = await repos.items.add(
             owner_id=seller["id"],
             steam_asset_id="1",
             market_hash_name="AK-47 | Redline (Field-Tested)",
             price_steam=12.5,
         )
 
-        await state.update_data(title="Меняю AK на AWP", item_map={"1": 1})
+        await state.update_data(item_map={"1": item_id})
         await state.set_state(TradeStates.waiting_items_offered)
         await process_items_offered(make_message(bot, "1"), state, repos)
-        await process_wanted_search(make_message(bot, "AWP Asiimov"), state, repos)
+        assert await state.get_state() == TradeStates.waiting_wanted.state
+
+        await process_wanted(make_message(bot, "асимов мв"), state, repos)
 
         data = await state.get_data()
-        assert data["candidates"]["1"].startswith("AWP | Asiimov")
+        assert data["wanted_name"] == "AWP | Asiimov (Minimal Wear)"
+        assert await state.get_state() == TradeStates.waiting_confirm.state
 
-        await process_wanted_pick(make_message(bot, "1"), state, repos)
+        await cb_draft_publish(make_callback(bot, "draft_publish", BOT_ID), state, repos)
 
         offers = await repos.offers.get_by_creator(seller["id"])
-        assert offers[0]["wanted_name"] == "AWP | Asiimov (Field-Tested)"
-        assert offers[0]["items_wanted"] == "AWP | Asiimov (Field-Tested)"
+        assert offers[0]["wanted_name"] == "AWP | Asiimov (Minimal Wear)"
+        assert "Asiimov" in offers[0]["title"]
 
-    async def test_unknown_skin_keeps_searching(self, bot, repos, state, session, seller):
-        await state.update_data(title="Тест", item_map={"1": 1}, items_offered=[1])
-        await state.set_state(TradeStates.waiting_wanted_search)
-        await process_wanted_search(make_message(bot, "несуществующий скин"), state, repos)
+    async def test_price_limit_is_respected(self, bot, repos, state, seller):
+        await repos.skins.upsert_many(
+            [
+                {"market_hash_name": "AWP | Asiimov (Field-Tested)", "price_value": 118.9},
+                {"market_hash_name": "AWP | Asiimov (Minimal Wear)", "price_value": 220.0},
+            ]
+        )
+        await state.update_data(item_map={"1": 1}, items_offered=[1], title=None)
+        await process_wanted(make_message(bot, "асимов до 150$"), state, repos)
 
-        assert "ничего не нашлось" in last_text(session)
-        assert await state.get_state() == "TradeStates:waiting_wanted_search"
+        data = await state.get_data()
+        assert data["wanted_name"] == "AWP | Asiimov (Field-Tested)"
 
-    async def test_skip_wanted(self, bot, repos, state, seller):
-        await state.update_data(title="Без конкретики", item_map={"1": 1}, items_offered=[1])
-        await state.set_state(TradeStates.waiting_wanted_search)
-        await process_wanted_search(make_message(bot, "-"), state, repos)
+    async def test_unknown_query_keeps_step_two(self, bot, repos, state, session, seller):
+        await state.set_state(TradeStates.waiting_wanted)
+        await state.update_data(item_map={"1": 1}, items_offered=[1])
+        await process_wanted(make_message(bot, "несусветный скин"), state, repos)
+
+        assert "не нашёл" in last_text(session)
+        assert await state.get_state() == TradeStates.waiting_wanted.state
+
+    async def test_skip_wanted_publishes_without_name(self, bot, repos, state, seller):
+        await state.update_data(item_map={"1": 1}, items_offered=[1])
+        await state.set_state(TradeStates.waiting_wanted)
+        await process_wanted(make_message(bot, "-"), state, repos)
+
+        assert await state.get_state() == TradeStates.waiting_confirm.state
+        await cb_draft_publish(make_callback(bot, "draft_publish", BOT_ID), state, repos)
 
         offers = await repos.offers.get_by_creator(seller["id"])
         assert offers[0]["items_wanted"] == "Не указано"

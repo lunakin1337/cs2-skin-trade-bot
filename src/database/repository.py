@@ -747,11 +747,14 @@ class SkinRepository:
                 continue
             await self.db.execute(
                 """
-                INSERT INTO skins (market_hash_name, name, price_text, icon_url, updated_at)
-                VALUES (?, ?, ?, ?, datetime('now'))
+                INSERT INTO skins (
+                    market_hash_name, name, price_text, price_value, icon_url, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(market_hash_name) DO UPDATE SET
                     name = excluded.name,
                     price_text = COALESCE(excluded.price_text, skins.price_text),
+                    price_value = COALESCE(excluded.price_value, skins.price_value),
                     icon_url = COALESCE(excluded.icon_url, skins.icon_url),
                     updated_at = datetime('now')
                 """,
@@ -759,6 +762,7 @@ class SkinRepository:
                     name,
                     skin.get("name") or name,
                     skin.get("price_text"),
+                    skin.get("price_value"),
                     skin.get("icon_url"),
                 ),
             )
@@ -783,6 +787,52 @@ class SkinRepository:
             (*params, limit),
         )
         return [dict(row) for row in await cur.fetchall()]
+
+    async def search_structured(
+        self,
+        tokens: List[str],
+        wear: Optional[str] = None,
+        max_price: Optional[float] = None,
+        stattrak: bool = False,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Поиск по разобранному запросу: токены, износ, цена, StatTrak."""
+        conditions: List[str] = []
+        params: List[Any] = []
+
+        for token in tokens:
+            conditions.append("market_hash_name LIKE ?")
+            params.append(f"%{token}%")
+
+        if stattrak:
+            conditions.append("market_hash_name LIKE 'StatTrak%'")
+
+        if wear:
+            conditions.append("market_hash_name LIKE ?")
+            params.append(f"%({wear})%")
+
+        if max_price:
+            conditions.append("(price_value IS NULL OR price_value <= ?)")
+            params.append(max_price)
+
+        where = " AND ".join(conditions) if conditions else "1 = 1"
+        cur = await self.db.execute(
+            f"""
+            SELECT * FROM skins
+            WHERE {where}
+            ORDER BY COALESCE(price_value, 1000000), LENGTH(market_hash_name)
+            LIMIT ?
+            """,
+            (*params, limit),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
+    async def all_names(self, limit: int = 5000) -> List[str]:
+        cur = await self.db.execute(
+            "SELECT market_hash_name FROM skins ORDER BY LENGTH(market_hash_name) LIMIT ?",
+            (limit,),
+        )
+        return [row["market_hash_name"] for row in await cur.fetchall()]
 
     async def count(self) -> int:
         cur = await self.db.execute("SELECT COUNT(*) AS cnt FROM skins")
