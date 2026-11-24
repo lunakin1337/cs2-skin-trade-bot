@@ -11,8 +11,9 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from bot.handlers.trades import render_trades
 from bot.keyboards.inline import back_to_main_keyboard
 from bot.services.disputes import DisputeError, notify_dispute, open_dispute
+from bot.services.trades import settle_after_receipt
 from bot.states.trade import DisputeStates
-from bot.utils.formatters import NEWLINE
+from bot.utils.formatters import NEWLINE, format_deadline
 from bot.utils.telegram import edit_or_send, notify
 from bot.utils.users import ensure_user
 from config.settings import BotConfig
@@ -28,8 +29,11 @@ TRADE_INFO = (
     "2. Обе стороны подтверждают её в /trades\n"
     "3. Открывается кнопка «Обмен» — она ведёт на Steam Trade URL контрагента\n"
     "4. Каждая сторона жмёт «Получил», когда скины на руках\n"
-    "5. После этого сделка закрывается и можно поставить оценку\n\n"
-    "Если что-то пошло не так — /dispute или кнопка «⚠️ Открыть спор» в /trades."
+    "5. Дальше сделка ещё 7 дней под Trade Protection: предметы нельзя передать или\n"
+    "   продать, а отправитель может отменить трейд — сделка ждёт этот срок\n"
+    "6. Когда срок истёк, сделка закрывается сама и появляется оценка\n\n"
+    "Если трейд откатили в Steam — кнопка «↩️ Трейд отменён»: сделка уходит в\n"
+    "«отменена», счётчики и оценки не меняются. Остальные проблемы — /dispute."
 )
 
 
@@ -153,15 +157,16 @@ async def cb_trade_complete(callback: CallbackQuery, repos: Repositories) -> Non
 
     await repos.trades.set_completed_side(trade_id, role)
     trade = await repos.trades.get_by_id(trade_id)
+    trade = await settle_after_receipt(repos, trade)
 
-    if trade["buyer_completed_at"] and trade["seller_completed_at"]:
-        await repos.trades.mark_completed(trade_id)
-        for participant in (trade["buyer_id"], trade["seller_id"]):
-            await repos.users.increment_trades_count(participant)
-        if trade.get("offer_id"):
-            await repos.offers.update_status(trade["offer_id"], "completed")
+    if trade["status"] == "holding":
+        deadline = format_deadline(trade.get("finalize_at"))
         await _refresh_message(callback, repos)
-        await notify(callback, "Сделка завершена — поставьте оценку контрагенту")
+        await notify(
+            callback,
+            f"Оба получили скины. Сделка закроется {deadline}: до этого предметы под "
+            "Trade Protection и отправитель может отменить трейд.",
+        )
         return
 
     await _refresh_message(callback, repos)
@@ -268,6 +273,34 @@ async def cb_trade_cancel(callback: CallbackQuery, repos: Repositories) -> None:
 
     await _refresh_message(callback, repos)
     await notify(callback, "Сделка отменена, предложение снова активно")
+
+
+@router.callback_query(F.data.startswith("trade_rollback_"))
+async def cb_trade_rollback(callback: CallbackQuery, repos: Repositories) -> None:
+    """Контрагент отменил трейд в Steam: сделка возвращается в cancelled без счётчиков."""
+    trade_id = _trade_id(callback.data)
+    trade = await repos.trades.get_by_id(trade_id) if trade_id else None
+    if not trade:
+        await notify(callback, "Сделка не найдена", alert=True)
+        return
+
+    user = await ensure_user(repos, callback.from_user)
+    if _role(trade, user["id"]) is None:
+        await notify(callback, "Это не ваша сделка", alert=True)
+        return
+    if trade["status"] != "holding":
+        await notify(callback, "Сделка не ждёт окончания Trade Protection", alert=True)
+        return
+
+    await repos.trades.update_status(trade_id, "cancelled")
+    if trade.get("offer_id"):
+        await repos.offers.update_status(trade["offer_id"], "active")
+
+    await _refresh_message(callback, repos)
+    await notify(
+        callback,
+        "Сделка отменена: трейд откатили в Steam. Счётчики сделок и оценки не изменились.",
+    )
 
 
 def _trade_id(callback_data: str) -> int | None:

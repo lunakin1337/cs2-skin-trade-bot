@@ -15,8 +15,15 @@ from bot.services.disputes import (
 )
 from bot.services.inventory_sync import sync_inventory
 from bot.services.skin_search import find_candidates
-from bot.services.trades import trade_payload
-from bot.utils.formatters import TRADE_STATUS_LABELS, format_author, short_name, wear_abbr
+from bot.services.trades import finalize_due, settle_after_receipt, trade_payload
+from bot.utils.formatters import (
+    PROTECTION_NOTE,
+    TRADE_STATUS_LABELS,
+    format_author,
+    format_deadline,
+    short_name,
+    wear_abbr,
+)
 from bot.utils.skin_categories import CATEGORY_ORDER, category_title
 from bot.utils.steam import TradeUrl, get_steam_client, SteamError, parse_trade_url
 from bot.utils.telegram_auth import parse_init_data
@@ -634,6 +641,8 @@ def _trade_json(trade: dict, user_id: int) -> dict:
         actions.append({"name": "confirm", "label": "✅ Подтвердить"})
     if trade["status"] == "in_escrow" and not trade.get(f"{role}_completed_at"):
         actions.append({"name": "complete", "label": "📦 Получил"})
+    if trade["status"] == "holding":
+        actions.append({"name": "rollback", "label": "↩️ Трейд отменён в Steam"})
     if trade["status"] in DISPUTE_TRADE_STATUSES and not trade.get("dispute_open"):
         actions.append({"name": "dispute", "label": "⚠️ Открыть спор"})
     if trade["status"] in {"pending", "confirmed", "in_escrow"}:
@@ -651,6 +660,13 @@ def _trade_json(trade: dict, user_id: int) -> dict:
         "confirmed": bool(trade.get(f"{role}_confirmed_at")),
         "received": bool(trade.get(f"{role}_completed_at")),
         "dispute_open": bool(trade.get("dispute_open")),
+        "finalize_at": trade.get("finalize_at"),
+        "finalize_label": (
+            format_deadline(trade.get("finalize_at")) if trade.get("finalize_at") else None
+        ),
+        "protection_note": (
+            PROTECTION_NOTE if trade["status"] in {"in_escrow", "holding"} else None
+        ),
         "actions": actions,
     }
 
@@ -665,6 +681,7 @@ async def api_trades(request: web.Request) -> web.Response:
 
     items = []
     for trade in trades:
+        trade = await finalize_due(repos, trade)
         details = await trade_payload(repos, trade, user["id"])
         payload = _trade_json({**trade, **details}, user["id"])
         payload.update(details)
@@ -688,6 +705,7 @@ async def api_trade_action(request: web.Request) -> web.Response:
     trade = await repos.trades.get_by_id(trade_id)
     if not trade:
         return web.json_response({"error": "Сделка не найдена"}, status=404)
+    trade = await finalize_due(repos, trade)
 
     if user["id"] not in {trade["buyer_id"], trade["seller_id"]}:
         return web.json_response({"error": "Это не ваша сделка"}, status=403)
@@ -712,14 +730,27 @@ async def api_trade_action(request: web.Request) -> web.Response:
 
         await repos.trades.set_completed_side(trade_id, role)
         trade = await repos.trades.get_by_id(trade_id)
-        if trade["buyer_completed_at"] and trade["seller_completed_at"]:
-            await repos.trades.mark_completed(trade_id)
-            for participant in (trade["buyer_id"], trade["seller_id"]):
-                await repos.users.increment_trades_count(participant)
-            if trade.get("offer_id"):
-                await repos.offers.update_status(trade["offer_id"], "completed")
-            return web.json_response({"ok": True, "status": "completed"})
+        trade = await settle_after_receipt(repos, trade)
+        if trade["status"] == "holding":
+            return web.json_response(
+                {
+                    "ok": True,
+                    "status": "holding",
+                    "finalize_at": trade.get("finalize_at"),
+                    "finalize_label": format_deadline(trade.get("finalize_at")),
+                }
+            )
         return web.json_response({"ok": True, "status": trade["status"]})
+
+    if action == "rollback":
+        if trade["status"] != "holding":
+            return web.json_response(
+                {"error": "Сделка не ждёт окончания Trade Protection"}, status=400
+            )
+        await repos.trades.update_status(trade_id, "cancelled")
+        if trade.get("offer_id"):
+            await repos.offers.update_status(trade["offer_id"], "active")
+        return web.json_response({"ok": True, "status": "cancelled"})
 
     if action == "cancel":
         if trade["status"] not in {"pending", "confirmed", "in_escrow"}:
@@ -737,6 +768,12 @@ async def api_trade_action(request: web.Request) -> web.Response:
             return web.json_response({"error": "Нужна оценка 1–5"}, status=400)
         if not 1 <= score <= 5:
             return web.json_response({"error": "Оценка от 1 до 5"}, status=400)
+        if trade["status"] == "holding":
+            deadline = format_deadline(trade.get("finalize_at"))
+            return web.json_response(
+                {"error": f"Оценка откроется после окончания Trade Protection ({deadline})"},
+                status=400,
+            )
         if trade["status"] != "completed":
             return web.json_response({"error": "Оценить можно только завершённую сделку"}, status=400)
         if await repos.ratings.exists(trade_id, user["id"]):

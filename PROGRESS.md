@@ -19,7 +19,7 @@ Telegram Mini App.
 ## Стек и структура
 
 - aiogram 3.34, SQLite (aiosqlite), aiohttp; Python 3.11+
-- Тесты: pytest (172 зелёных), линт ruff; CI в GitHub Actions
+- Тесты: pytest (183 зелёных), линт ruff; CI в GitHub Actions
 - src-layout: пакеты `bot`, `config`, `database` из `src/`
 
 ```
@@ -28,7 +28,7 @@ src/
   database/
     repository.py             Database + репозитории: users, items, offers, trades,
                               trade_items, ratings, disputes, settings, skins
-    migrations/               001_initial … 006_skin_categories (единственный источник схемы)
+    migrations/               001_initial … 008_trade_protection (единственный источник схемы)
   bot/
     main.py                   запуск polling, ожидание Bot API, middleware
     handlers/                 start, profile, inventory, catalog-скины, offers, create_offer,
@@ -117,11 +117,21 @@ StatTrak. `services/skin_search.py` ищет по шагам: с износом 
 5. Когда подтвердили оба — статус `in_escrow` и появляется кнопка **«🔗 Steam Trade»**:
    ссылка на Trade URL контрагента с параметром `items` (JSON скинов этой стороны), поэтому
    предметы уже стоят в окне обмена.
-6. После обмена каждая сторона жмёт «📦 Получил»; когда отметили оба — `completed`,
-   растут счётчики сделок, можно поставить оценку 1–5 (средний рейтинг пересчитывается,
-   контрагент получает уведомление).
-7. Отмена доступна до получения скинов, объявление возвращается на доску.
-8. Если обмен пошёл не так, участник жмёт «⚠️ Открыть спор» (в боте и в Mini App),
+6. После обмена каждая сторона жмёт «📦 Получил». Когда отметили оба — сделка идёт не в
+   `completed`, а в `holding`: полученные CS2-предметы 7 дней под Steam Trade Protection
+   (нельзя передать или продать), и всё это время отправитель может отменить трейд. В карточке
+   сделки видно предупреждение и дату `finalize_at` = момент второго «Получил» + 7 дней
+   (в карточке — `01.12.2026 12:00 UTC`).
+7. `holding` → `completed` без демона: срок проверяется при каждом чтении сделки
+   (`services/trades.finalize_due`), `TradeRepository.finalize` закрывает только ту сделку,
+   у которой `finalize_at <= now`, и возвращает True ровно одному вызову — поэтому счётчики
+   сделок и статус объявления обновляются один раз. `completed_at` = `finalize_at`.
+8. Оценка 1–5 и рост `trades_count` доступны только в `completed`; в `holding` бот и Mini App
+   отвечают датой, когда оценка откроется.
+9. Отмена до получения скинов (объявление возвращается на доску) и отдельная ветка для
+   `holding`: контрагент откатил трейд в Steam → кнопка «↩️ Трейд отменён», сделка уходит в
+   `cancelled`, счётчики и оценки не меняются.
+10. Если обмен пошёл не так, участник жмёт «⚠️ Открыть спор» (в боте и в Mini App),
    пишет причину текстом — создаётся запись в `disputes`, админ (8851272459) и вторая
    сторона получают уведомление. Открытый спор на сделку только один (уникальный индекс
    `idx_disputes_open_trade`), кнопка исчезает, пока спор не решён через /resolve.
@@ -153,7 +163,7 @@ StatTrak. `services/skin_search.py` ищет по шагам: с износом 
 **API Mini App:** `/api/me`, `/api/profile/steam`, `/api/profile/refresh`, `/api/inventory`,
 `/api/inventory/sync`, `/api/catalog`, `/api/catalog/tree`, `/api/catalog/items`,
 `/api/offers` (GET доска, POST создание), `/api/my_offers`, `/api/offers/{id}/accept|cancel|
-delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api/trades/{id}/dispute`, `/api/rating`,
+delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|rollback|cancel|rate}`, `/api/trades/{id}/dispute`, `/api/rating`,
 `/api/admin/{stats|users|ban|disputes|disputes/{id}/resolve}`.
 
 ## Инфраструктура и запуск (что где живёт)
@@ -188,6 +198,11 @@ delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api
   спор всё равно открывается, но уведомления не уходят (в логе warning).
 - **id предмета** — это `items.id` из базы (не Steam asset id). Нумерация в интерфейсе
   отдельная, 1..N, и совпадает между `/inventory` и шагом выбора скинов.
+- **Сделка не становится `completed` по двум «Получил»** — она идёт в `holding` на 7 дней
+  Trade Protection. Переход делает не задача-демон, а первое чтение сделки после
+  `finalize_at`; поэтому любой новый экран сделок должен звать `services/trades.finalize_due`,
+  иначе сделка навсегда останется `holding`. Счётчики начисляет только тот вызов, чей
+  `UPDATE` реально сменил статус (иначе два чтения подряд удвоят `trades_count`).
 - **Кэш каталога живёт в памяти веб-процесса**, поэтому прямой `INSERT` в `skins` мимо
   `import_catalog`/`sync_inventory` его не сбросит: писать в каталог только через сервисы
   (они поднимают `settings.catalog_version`) либо ждать `WEB_CACHE_TTL`.
@@ -200,8 +215,10 @@ delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|cancel|rate}`, `/api
    предзагрузка следующей страницы каталога на клиенте.
 3. ~~ИИ-разбор совсем странных запросов~~ — `services/skin_query_llm.py` как последний
    шаг `find_candidates`; включается ключом `LLM_API_KEY` в `.env`.
-4. Автоматическая отправка Steam Trade Offer из бота (нужна сессия Steam бота: cookies +
-   shared_secret), сейчас ссылка с предзаполнением.
+4. ~~Автоматическая отправка Steam Trade Offer~~ — **не делаем**: официального метода в Steam
+   нет, а кастодиальная схема убита Trade Protection (7 дней холда + откат трейда) и SSAA §4C;
+   разбор с источниками — `reports/TELE-7.md` в драйве капитана. Вместо неё — холд и отмена
+   в модели доверия (п. 6–9 выше).
 5. Почистить историю git от отозванных токенов (`git filter-repo`) — по согласованию.
 6. ~~Убрать мусорные тестовые сделки~~ — готов `scripts/cleanup_test_trades.py`
    (dry-run по умолчанию, `--apply` с бэкапом базы); на проде не запускался.

@@ -175,6 +175,16 @@ def trades_keyboard(trades: Iterable[dict], viewer_id: int) -> InlineKeyboardMar
                     ]
                 )
 
+        if status == "holding":
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"↩️ Трейд отменён #{trade_id}",
+                        callback_data=f"trade_rollback_{trade_id}",
+                    )
+                ]
+            )
+
         if status in DISPUTE_STATUSES and not trade.get("dispute_open"):
             rows.append(
                 [

@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.inline import back_to_main_keyboard, rating_keyboard
-from bot.utils.formatters import trade_role
+from bot.utils.formatters import format_deadline, trade_role
 from bot.utils.telegram import edit_or_send, notify
 from bot.utils.users import ensure_user
 from database.repository import Repositories
@@ -62,6 +62,13 @@ async def cb_rate_menu(callback: CallbackQuery, repos: Repositories) -> None:
     if trade["buyer_id"] != user["id"] and trade["seller_id"] != user["id"]:
         await notify(callback, "Это не ваша сделка", alert=True)
         return
+    if trade["status"] == "holding":
+        await notify(
+            callback,
+            f"Сделка ещё под Trade Protection до {format_deadline(trade.get('finalize_at'))}",
+            alert=True,
+        )
+        return
     if trade["status"] != "completed":
         await notify(callback, "Оценить можно только завершённую сделку", alert=True)
         return
@@ -88,6 +95,13 @@ async def cb_rate(callback: CallbackQuery, repos: Repositories) -> None:
     trade_id, score = int(raw_trade_id), int(raw_score)
 
     trade = await repos.trades.get_by_id(trade_id)
+    if trade and trade["status"] == "holding":
+        await notify(
+            callback,
+            f"Оценка откроется после окончания Trade Protection ({format_deadline(trade.get('finalize_at'))})",
+            alert=True,
+        )
+        return
     if not trade or trade["status"] != "completed":
         await notify(callback, "Оценка доступна только по завершённой сделке", alert=True)
         return

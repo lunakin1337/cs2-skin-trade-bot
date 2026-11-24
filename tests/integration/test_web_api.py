@@ -295,6 +295,24 @@ class TestTradesApi:
             await client.post(f"/api/trades/{trade_id}/complete", headers=auth_headers(user_id))
 
         trades = await (await client.get("/api/trades", headers=auth_headers())).json()
+        hold = trades["items"][0]
+        assert hold["status"] == "holding"
+        assert hold["finalize_label"] and hold["finalize_at"]
+        assert "Trade Protection" in hold["protection_note"]
+        assert [action["name"] for action in hold["actions"]] == ["rollback"]
+        assert hold["received"] is True
+
+        early = await client.post(
+            f"/api/trades/{trade_id}/rate", headers=auth_headers(), json={"score": 5}
+        )
+        assert early.status == 400
+
+        await repos.db.execute(
+            "UPDATE trades SET finalize_at = datetime('now', '-1 minute') WHERE id = ?", (trade_id,)
+        )
+        await repos.db.commit()
+
+        trades = await (await client.get("/api/trades", headers=auth_headers())).json()
         assert trades["items"][0]["status"] == "completed"
 
         rated = await client.post(
@@ -304,6 +322,47 @@ class TestTradesApi:
 
         rating = await (await client.get("/api/rating", headers=auth_headers(999000111))).json()
         assert rating["average"] == 5.0
+
+    async def test_rollback_after_steam_cancel(self, client):
+        repos = client.app[REPOS_KEY]
+        seller = await repos.users.create_or_update(telegram_id=999000222, username="seller2")
+        buyer = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        for participant in (seller, buyer):
+            await repos.users.link_steam(
+                participant["id"],
+                "76561198000000000",
+                "https://steamcommunity.com/tradeoffer/new/?partner=1&token=abcd",
+                trade_partner="1",
+                trade_token="abcd",
+            )
+
+        offer_id = await repos.offers.create(
+            creator_id=seller["id"], title="Перчатки", items_offered=[], items_wanted="AWP"
+        )
+        accepted = await client.post(f"/api/offers/{offer_id}/accept", headers=auth_headers())
+        trade_id = (await accepted.json())["trade_id"]
+
+        for user_id in (TELEGRAM_ID, 999000222):
+            await client.post(f"/api/trades/{trade_id}/confirm", headers=auth_headers(user_id))
+        for user_id in (TELEGRAM_ID, 999000222):
+            await client.post(f"/api/trades/{trade_id}/complete", headers=auth_headers(user_id))
+
+        rolled = await client.post(
+            f"/api/trades/{trade_id}/rollback", headers=auth_headers()
+        )
+        assert rolled.status == 200
+        assert (await rolled.json())["status"] == "cancelled"
+
+        trade = await repos.trades.get_by_id(trade_id)
+        assert trade["status"] == "cancelled"
+
+        buyer_after = await repos.users.get_by_telegram_id(TELEGRAM_ID)
+        assert buyer_after["trades_count"] == 0
+
+        again = await client.post(
+            f"/api/trades/{trade_id}/rollback", headers=auth_headers()
+        )
+        assert again.status == 400
 
 
 class TestAdminApi:
