@@ -10,7 +10,8 @@ from bot.services import inventory_sync
 from bot.utils.steam import SteamInventory, SteamItem
 from bot.utils.telegram_auth import build_init_data
 from config.settings import BotConfig
-from web_app import REPOS_KEY, create_app
+from web_app import create_app
+from webapp_context import REPOS_KEY
 
 TOKEN = "123456:AAHbbQ61o1k8P2uGpwVxpXLL5LDUe03x0Q"
 TELEGRAM_ID = 555000111
@@ -63,7 +64,8 @@ class TestAuth:
         assert data["telegram_id"] == TELEGRAM_ID
         assert data["username"] == "masha"
         assert data["steam"]["linked"] is False
-        assert data["inventory"]["count"] == 0
+        assert data["is_admin"] is False
+        assert data["inventory"]["total"] == 0
 
     async def test_mini_app_page_served(self, client):
         response = await client.get("/")
@@ -177,11 +179,153 @@ class TestOffersApi:
 
 class TestAdminPages:
     async def test_admin_requires_token(self, client):
-        assert (await client.get("/admin")).status == 403
         assert (await client.get("/stats")).status == 403
 
     async def test_admin_with_token(self, client):
-        response = await client.get("/admin?token=secret")
+        response = await client.get("/stats?token=secret")
 
         assert response.status == 200
-        assert "Пользователи" in await response.text()
+        assert "Статистика" in await response.text()
+
+
+class TestOffersBoard:
+    async def _items(self, repos, telegram_id: int, count: int = 1) -> list[int]:
+        user = await repos.users.get_by_telegram_id(telegram_id)
+        created = []
+        for index in range(count):
+            created.append(
+                await repos.items.add(
+                    owner_id=user["id"],
+                    steam_asset_id=f"{telegram_id}-{index}",
+                    market_hash_name=f"AWP | Asiimov (Field-Tested) {index}",
+                    price_steam=100.0 + index,
+                )
+            )
+        return created
+
+    async def test_create_and_delete_own_offer(self, client):
+        repos = client.app[REPOS_KEY]
+        await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        await repos.skins.upsert_many([{"market_hash_name": "AK-47 | Redline (Field-Tested)"}])
+        item_ids = await self._items(repos, TELEGRAM_ID)
+
+        created = await client.post(
+            "/api/offers",
+            headers=auth_headers(),
+            json={"item_ids": item_ids, "wanted": "ак редлайн"},
+        )
+        body = await created.json()
+        assert created.status == 200
+        assert body["wanted"] == "AK-47 | Redline (Field-Tested)"
+
+        mine = await (await client.get("/api/my_offers", headers=auth_headers())).json()
+        assert mine["items"][0]["id"] == body["id"]
+
+        deleted = await client.post(f"/api/offers/{body['id']}/delete", headers=auth_headers())
+        assert deleted.status == 200
+
+        mine = await (await client.get("/api/my_offers", headers=auth_headers())).json()
+        assert mine["items"] == []
+
+    async def test_cannot_accept_own_offer(self, client):
+        repos = client.app[REPOS_KEY]
+        user = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        await repos.users.link_steam(
+            user["id"],
+            "76561198000000000",
+            "https://steamcommunity.com/tradeoffer/new/?partner=1&token=abcd",
+            trade_partner="1",
+            trade_token="abcd",
+        )
+        item_ids = await self._items(repos, TELEGRAM_ID)
+        offer_id = await repos.offers.create(
+            creator_id=user["id"], title="Моё", items_offered=item_ids, items_wanted="—"
+        )
+
+        response = await client.post(f"/api/offers/{offer_id}/accept", headers=auth_headers())
+
+        assert response.status == 400
+        assert "своё" in (await response.json())["error"]
+
+    async def test_board_hides_accept_for_own(self, client):
+        repos = client.app[REPOS_KEY]
+        user = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        other = await repos.users.create_or_update(telegram_id=999000111, username="other")
+        await repos.offers.create(creator_id=user["id"], title="Моё", items_offered=[], items_wanted="a")
+        await repos.offers.create(creator_id=other["id"], title="Чужое", items_offered=[], items_wanted="b")
+
+        board = await (await client.get("/api/offers", headers=auth_headers())).json()
+        own = {offer["title"]: offer["own"] for offer in board["items"]}
+        assert own == {"Моё": True, "Чужое": False}
+
+
+class TestTradesApi:
+    async def test_full_trade_cycle(self, client):
+        repos = client.app[REPOS_KEY]
+        seller = await repos.users.create_or_update(telegram_id=999000111, username="seller")
+        buyer = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        for participant in (seller, buyer):
+            await repos.users.link_steam(
+                participant["id"],
+                "76561198000000000",
+                "https://steamcommunity.com/tradeoffer/new/?partner=1&token=abcd",
+                trade_partner="1",
+                trade_token="abcd",
+            )
+
+        offer_id = await repos.offers.create(
+            creator_id=seller["id"], title="Нож", items_offered=[], items_wanted="AWP"
+        )
+
+        accepted = await client.post(f"/api/offers/{offer_id}/accept", headers=auth_headers())
+        trade_id = (await accepted.json())["trade_id"]
+
+        for user_id in (TELEGRAM_ID, 999000111):
+            response = await client.post(
+                f"/api/trades/{trade_id}/confirm", headers=auth_headers(user_id)
+            )
+            assert response.status == 200
+
+        trades = await (await client.get("/api/trades", headers=auth_headers())).json()
+        assert trades["items"][0]["status"] == "in_escrow"
+        assert trades["items"][0]["counterpart_url"].startswith("https://steamcommunity.com")
+
+        for user_id in (TELEGRAM_ID, 999000111):
+            await client.post(f"/api/trades/{trade_id}/complete", headers=auth_headers(user_id))
+
+        trades = await (await client.get("/api/trades", headers=auth_headers())).json()
+        assert trades["items"][0]["status"] == "completed"
+
+        rated = await client.post(
+            f"/api/trades/{trade_id}/rate", headers=auth_headers(), json={"score": 5}
+        )
+        assert rated.status == 200
+
+        rating = await (await client.get("/api/rating", headers=auth_headers(999000111))).json()
+        assert rating["average"] == 5.0
+
+
+class TestAdminApi:
+    async def test_forbidden_for_regular_user(self, client):
+        await client.get("/api/me", headers=auth_headers())
+        response = await client.get("/api/admin/stats", headers=auth_headers())
+        assert response.status == 403
+
+    async def test_allowed_for_owner(self, client):
+        response = await client.get("/api/admin/stats", headers=auth_headers(8851272459))
+        assert response.status == 200
+        assert "users" in await response.json()
+
+    async def test_ban_user(self, client):
+        repos = client.app[REPOS_KEY]
+        target = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+
+        response = await client.post(
+            "/api/admin/ban",
+            headers=auth_headers(8851272459),
+            json={"telegram_id": TELEGRAM_ID},
+        )
+        assert response.status == 200
+
+        banned = await repos.users.get_by_id(target["id"])
+        assert banned["is_banned"] == 1

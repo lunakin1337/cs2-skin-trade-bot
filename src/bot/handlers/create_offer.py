@@ -1,6 +1,5 @@
 """Создание предложения за три шага: скины → «хочу» → подтверждение."""
 
-import difflib
 import logging
 
 from aiogram import F, Router
@@ -9,9 +8,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.inline import back_to_main_keyboard, draft_keyboard
+from bot.services.skin_search import find_candidates
 from bot.states.trade import TradeStates
 from bot.utils.formatters import NEWLINE, format_item, format_offer_card, short_name
-from bot.utils.skin_query import parse_query
 from bot.utils.telegram import notify
 from bot.utils.users import ensure_user
 from database.repository import Repositories
@@ -22,8 +21,6 @@ router = Router()
 
 MAX_OFFER_ITEMS = 10
 OFFER_LIST_LIMIT = 15
-CANDIDATES = 3
-FUZZY_THRESHOLD = 0.45
 
 
 async def _start_offer(target, repos: Repositories, state: FSMContext, user) -> None:
@@ -130,66 +127,6 @@ async def process_items_offered(
     )
 
 
-async def _find_candidates(repos: Repositories, text: str) -> list[dict]:
-    """Ищет постепенно ослабляя условия: износ и цена могут отсутствовать в каталоге."""
-    parsed = parse_query(text)
-    if not parsed.tokens:
-        return []
-
-    attempts = [
-        {"wear": parsed.wear, "max_price": parsed.max_price},
-        {"wear": parsed.wear, "max_price": None},
-        {"wear": None, "max_price": parsed.max_price},
-        {"wear": None, "max_price": None},
-    ]
-    for attempt in attempts:
-        found = await repos.skins.search_structured(
-            parsed.tokens,
-            wear=attempt["wear"],
-            max_price=attempt["max_price"],
-            stattrak=parsed.stattrak,
-            limit=CANDIDATES,
-        )
-        if found:
-            return found
-
-    # «нож керамбит»: если ножей в каталоге нет, пробуем без категории,
-    # но без графити/стикеров — человек просит оружие, а не наклейку
-    if "★" in parsed.tokens and len(parsed.tokens) > 1:
-        relaxed = await repos.skins.search_structured(
-            [token for token in parsed.tokens if token != "★"],
-            wear=parsed.wear,
-            max_price=parsed.max_price,
-            limit=CANDIDATES * 2,
-        )
-        weapons = [
-            row for row in relaxed
-            if not any(word in row["market_hash_name"] for word in ("Graffiti", "Sticker", "Capsule"))
-        ]
-        if weapons:
-            return weapons[:CANDIDATES]
-
-    # опечатки и незнакомые сокращения — ищем ближайшие названия
-    names = await repos.skins.all_names()
-    query = " ".join(parsed.tokens).lower()
-    scored = difflib.get_close_matches(
-        query, [name.lower() for name in names], n=CANDIDATES, cutoff=FUZZY_THRESHOLD
-    )
-    if not scored:
-        return []
-
-    anchor = max(parsed.tokens, key=len) if parsed.tokens else ""
-    matched = []
-    for needle in scored:
-        for name in names:
-            if name.lower() == needle:
-                # не подсовываем случайные скины: в названии должно быть самое редкое слово запроса
-                if anchor and anchor.lower() in name.lower():
-                    matched.append({"market_hash_name": name, "price_text": None})
-                break
-    return matched
-
-
 async def _show_preview(
     target: Message,
     state: FSMContext,
@@ -236,7 +173,7 @@ async def process_wanted(message: Message, state: FSMContext, repos: Repositorie
         await message.answer("❌ Слишком коротко. Опишите хотя бы двумя символами или «-».")
         return
 
-    candidates = await _find_candidates(repos, text)
+    candidates = await find_candidates(repos, text)
     if not candidates:
         await message.answer(
             "❌ Не нашёл такого скина в каталоге."
