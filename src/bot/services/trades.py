@@ -9,6 +9,10 @@ STEAM_TRADE_BASE = "https://steamcommunity.com/tradeoffer/new/"
 CS2_APP_ID = 730
 CS2_CONTEXT_ID = 2
 
+# С 16.07.2025 Steam держит полученные CS2-предметы под Trade Protection 7 дней
+# и позволяет отправителю всё это время отменить трейд (отчёт TELE-7).
+PROTECTION_DAYS = 7
+
 
 def steam_trade_link(partner: str | None, token: str | None, asset_ids: list[str]) -> str | None:
     """Ссылка на обмен, где уже подставлены скины отправителя.
@@ -52,6 +56,39 @@ async def trade_sides(repos: Repositories, trade: dict) -> dict:
         sides[role].append(entry)
 
     return sides
+
+
+async def settle_after_receipt(repos: Repositories, trade: dict) -> dict:
+    """Оба отметили получение: сделка уходит в holding, а не в completed.
+
+    Полученные скины PROTECTION_DAYS дней под Trade Protection, отправитель может
+    отменить трейд — поэтому окончательной сделка становится только в finalize_at.
+    """
+    if trade["status"] != "in_escrow":
+        return trade
+    if not (trade.get("buyer_completed_at") and trade.get("seller_completed_at")):
+        return trade
+
+    await repos.trades.set_holding(trade["id"], PROTECTION_DAYS)
+    return await repos.trades.get_by_id(trade["id"]) or trade
+
+
+async def finalize_due(repos: Repositories, trade: dict) -> dict:
+    """Ленивое завершение: чтение сделки после finalize_at закрывает её.
+
+    Фоновой задачи нет — срок проверяется при каждом чтении списка сделок,
+    а UPDATE с условием гарантирует, что счётчики вырастут ровно один раз.
+    """
+    if trade["status"] != "holding":
+        return trade
+    if not await repos.trades.finalize(trade["id"]):
+        return trade
+
+    for participant in (trade["buyer_id"], trade["seller_id"]):
+        await repos.users.increment_trades_count(participant)
+    if trade.get("offer_id"):
+        await repos.offers.update_status(trade["offer_id"], "completed")
+    return await repos.trades.get_by_id(trade["id"]) or trade
 
 
 async def trade_payload(repos: Repositories, trade: dict, viewer_id: int) -> dict:

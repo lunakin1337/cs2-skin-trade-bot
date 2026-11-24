@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from bot.keyboards.inline import back_to_main_keyboard, trades_keyboard
-from bot.services.trades import trade_payload
+from bot.services.trades import finalize_due, trade_payload
 from bot.utils.formatters import format_trade
 from bot.utils.telegram import edit_or_send, notify
 from bot.utils.users import ensure_user
@@ -34,6 +34,7 @@ async def render_trades(repos: Repositories, telegram_id: int) -> tuple[str, Inl
     outgoing: list[tuple[dict, str]] = []
 
     for trade in trades:
+        trade = await finalize_due(repos, trade)
         payload = await trade_payload(repos, trade, user["id"])
         trade.update(payload)
         block = format_trade(trade, user["id"])

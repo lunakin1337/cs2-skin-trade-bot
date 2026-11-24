@@ -591,6 +591,44 @@ class TradeRepository:
         )
         await self.db.commit()
 
+    async def set_holding(self, trade_id: int, hold_days: int) -> None:
+        """Оба отметили получение: сделка ждёт окончания Trade Protection.
+
+        Срок считается от последнего «Получил»: до finalize_at отправитель ещё может
+        отменить трейд в Steam, поэтому закрывать сделку раньше нельзя.
+        """
+        await self.db.execute(
+            """
+            UPDATE trades
+            SET status = 'holding',
+                finalize_at = datetime(MAX(buyer_completed_at, seller_completed_at), ?),
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (f"+{int(hold_days)} days", trade_id),
+        )
+        await self.db.commit()
+
+    async def finalize(self, trade_id: int) -> bool:
+        """Ленивый переход holding → completed, если срок защиты истёк.
+
+        Возвращает True только тому вызову, который реально закрыл сделку:
+        условие в UPDATE не даёт начислить счётчики дважды при двух чтениях подряд.
+        """
+        cur = await self.db.execute(
+            """
+            UPDATE trades
+            SET status = 'completed',
+                completed_at = finalize_at,
+                updated_at = datetime('now')
+            WHERE id = ? AND status = 'holding'
+              AND finalize_at IS NOT NULL AND finalize_at <= datetime('now')
+            """,
+            (trade_id,),
+        )
+        await self.db.commit()
+        return cur.rowcount == 1
+
     async def update_status(self, trade_id: int, status: str) -> None:
         await self.db.execute(
             "UPDATE trades SET status = ?, updated_at = datetime('now') WHERE id = ?",

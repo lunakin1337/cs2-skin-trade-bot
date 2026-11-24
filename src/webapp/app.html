@@ -1445,6 +1445,10 @@
       " · контрагент " + esc(trade.counterpart) + "</div>" +
       '<div class="sub">Подтверждение: ' + (trade.confirmed ? "✅" : "⏳") +
       " · получение: " + (trade.received ? "✅" : "⏳") + "</div>" +
+      (trade.protection_note ? '<div class="sub">🛡️ ' + esc(trade.protection_note) + "</div>" : "") +
+      (trade.status === "holding" && trade.finalize_label
+        ? '<div class="sub">Сделка станет окончательной ' + esc(trade.finalize_label) + "</div>"
+        : "") +
       (trade.dispute_open ? '<div class="sub">⚖️ Открыт спор — ждём решения администратора</div>' : "") +
       (trade.my_items && trade.my_items.length
         ? '<div class="sub">Отдаёте: ' + trade.my_items.map((item) => esc(item.name)).join(", ") + "</div>"
@@ -1500,7 +1504,12 @@
         const tradeId = button.getAttribute("data-trade");
         const action = button.getAttribute("data-action");
         const result = await api("/api/trades/" + tradeId + "/" + action, { method: "POST" });
-        notice("Готово: " + (result.status || action), "ok");
+        if (result.status === "holding") {
+          notice("Оба получили скины. Сделка станет окончательной " + result.finalize_label +
+            ": до этой даты предметы под Trade Protection и отправитель может отменить трейд.", "ok");
+        } else {
+          notice("Готово: " + (result.status || action), "ok");
+        }
         await loadTrades();
         await loadMe();
       }

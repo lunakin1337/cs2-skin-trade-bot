@@ -149,10 +149,26 @@ TRADE_STATUS_LABELS = {
     "pending": "⏳ ждёт подтверждения сторон",
     "confirmed": "✅ подтверждена",
     "in_escrow": "🔒 готово к обмену в Steam",
+    "holding": "🛡️ ждёт окончания Trade Protection",
     "completed": "🏁 завершена",
     "cancelled": "❌ отменена",
     "disputed": "⚖️ спор",
 }
+
+PROTECTION_NOTE = "После обмена 7 дней действует Trade Protection — отправитель может отменить трейд"
+ROLLBACK_NOTE = "если контрагент отменил трейд в Steam — жмите «↩️ Трейд отменён»"
+
+
+def format_deadline(value: str | None) -> str:
+    """Дата окончания Trade Protection: '2026-12-01 12:00:00' → '01.12.2026 12:00 UTC'."""
+    if not value:
+        return "—"
+    try:
+        date_part, time_part = str(value).replace("T", " ").split(" ")[:2]
+        year, month, day = date_part.split("-")
+        return f"{day}.{month}.{year} {time_part[:5]} UTC"
+    except ValueError:
+        return str(value)
 
 
 def trade_role(trade: dict, viewer_id: int) -> str:
@@ -183,9 +199,18 @@ def format_trade(trade: dict, viewer_id: int) -> str:
     ]
     if trade.get("dispute_open"):
         lines.append("   ⚖️ Открыт спор — ждём решения администратора")
-    if trade["status"] in {"in_escrow", "completed"}:
+    if trade["status"] in {"in_escrow", "holding", "completed"}:
         received = "✅" if trade.get(f"{role}_completed_at") else "⏳"
         lines.append(f"   Скины получены: {received}")
+    if trade["status"] == "in_escrow":
+        lines.append(f"   🛡️ {PROTECTION_NOTE}")
+    if trade["status"] == "holding":
+        deadline = format_deadline(trade.get("finalize_at"))
+        lines.append(f"   🛡️ {PROTECTION_NOTE}")
+        lines.append(f"   Окончательно сделка закроется {deadline}")
+        lines.append(f"   {ROLLBACK_NOTE}")
+    if trade["status"] == "cancelled" and trade.get("finalize_at"):
+        lines.append("   ↩️ Трейд откатили в Steam: счётчики и оценки не изменились")
 
     my_items = trade.get("my_items") or []
     their_items = trade.get("their_items") or []
