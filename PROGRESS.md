@@ -261,3 +261,11 @@ Mini App: полоса фильтров под поиском (износ, це�
 - `/health` проверяет базу: `{"status": "ok", "db": "ok", "migrations": N}`, при сбое базы — 503 и
   `degraded`.
 - Ограничение размера тела запроса — 1 МБ (`client_max_size`).
+
+## Бэкапы и запуск
+
+- `scripts/backup_db.py` — онлайн-копия базы в `backups/` (sqlite backup API) с ротацией:
+  `--keep` (по умолчанию 7), `--list` для просмотра. Копию снимают при работающем боте.
+- CI проверяет ещё и `scripts/` и собирает docker-образ, а также импортирует в нём `web_app`.
+- `docker-compose.yml` поднимает два сервиса: `bot` (поллинг) и `web` (Mini App и API на 8080)
+  с healthcheck на `/health`.
