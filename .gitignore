@@ -45,3 +45,4 @@ build/
 .docker/
 # Бэкапы базы
 data/*.bak
+backups/
