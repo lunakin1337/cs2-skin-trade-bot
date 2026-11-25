@@ -4,7 +4,7 @@
 что осталось. Дополняется по ходу работы. Технические шаги запуска — в
 [INSTRUCTIONS.md](INSTRUCTIONS.md).
 
-**Версия:** 0.1 (тег `v0.1`) + правки после тега (сделки, каталог, встречные предложения).
+**Версия:** 0.2 (тег `v0.2`).
 **Репозиторий:** github.com/lunakin1337/cs2-skin-trade-bot (публичный).
 **Бот:** `@Cs2_p2pbot` (`cs 2 test`, id 9142832309).
 **Владелец/админ:** Telegram id `8851272459` — только ему доступна админка.
@@ -19,7 +19,7 @@ Telegram Mini App.
 ## Стек и структура
 
 - aiogram 3.34, SQLite (aiosqlite), aiohttp; Python 3.11+
-- Тесты: pytest (183 зелёных), линт ruff; CI в GitHub Actions
+- Тесты: pytest (242 зелёных), линт ruff по `src tests scripts`; CI в GitHub Actions
 - src-layout: пакеты `bot`, `config`, `database` из `src/`
 
 ```
@@ -28,13 +28,15 @@ src/
   database/
     repository.py             Database + репозитории: users, items, offers, trades,
                               trade_items, ratings, disputes, settings, skins
-    migrations/               001_initial … 008_trade_protection (единственный источник схемы)
+    migrations/               001_initial … 009_skin_rarity (единственный источник схемы)
+  catalog_cache.py            TTL-кэш каталога: ETag, версия каталога в settings
   bot/
     main.py                   запуск polling, ожидание Bot API, middleware
     handlers/                 start, profile, inventory, catalog-скины, offers, create_offer,
                               trades, trade_flow, escrow, ratings, admin, skins
     services/                 inventory_sync, skin_catalog (импорт), skin_search,
-                              trades (ссылки Steam + детали сделки)
+                              skin_query_llm (ИИ-фолбэк «хочу»), disputes,
+                              trades (ссылки Steam, детали сделки, Trade Protection)
     utils/                    steam, prices, formatters, validators, telegram_auth,
                               skin_query (разбор «хочу»), skin_categories, users
   web_app.py                  отдаёт Mini App и /stats, поднимает API
@@ -43,8 +45,10 @@ src/
     services/disputes.py      споры: проверки, открытие, уведомления
   webapp_context.py           ключи состояния aiohttp (в т.ч. бот для уведомлений)
   catalog_cache.py            кэш ответов каталога: TTL, ETag, версия каталога в settings
-scripts/refresh_webapp_url.py обновляет WEB_APP_URL по логу cloudflared
+scripts/refresh_webapp_url.py обновляет WEB_APP_URL по логу cloudflared (последний живой адрес)
 scripts/cleanup_test_trades.py чистка мусорных тестовых сделок (dry-run / --apply)
+scripts/import_rarities.py   заполняет редкость каталога из датасета CSGO-API (dry-run / --apply)
+scripts/backup_db.py         онлайн-копия базы с ротацией (--keep, --list)
 ```
 
 ## Модель данных (кратко)
@@ -59,12 +63,15 @@ scripts/cleanup_test_trades.py чистка мусорных тестовых с
   каталога), `items_wanted` (свободный текст), `status` (active / in_trade / completed /
   cancelled), `description`
 - `trades` — сделки: `buyer_id`, `seller_id`, `offer_id`, `status` (pending → confirmed →
-  in_escrow → completed / cancelled), отметки `buyer_confirmed_at` / `seller_confirmed_at`,
-  `buyer_completed_at` / `seller_completed_at`
+  in_escrow → holding → completed / cancelled), отметки `buyer_confirmed_at` /
+  `seller_confirmed_at`, `buyer_completed_at` / `seller_completed_at`, `finalize_at`
+  (когда сделку можно считать окончательной: второй «Получил» + 7 дней)
 - `trade_items` — какие предметы кто отдаёт (`from_user_id` → `to_user_id`)
 - `ratings` — оценки 1–5, уникальность `(trade_id, from_user_id)`
 - `skins` — каталог CS2: `market_hash_name`, `price_text`, `price_value`, `icon_url`,
-  `category`, `weapon`
+  `category`, `weapon`, `rarity` (слаг CS2: consumer … covert, rare, contraband)
+- `disputes` — споры по сделкам: причина текстом, статус, решение админа; открытый спор
+  на сделку только один (частичный уникальный индекс)
 
 ## Как устроены ключевые потоки
 
@@ -83,6 +90,19 @@ Trade URL парсится в `partner` + `token` и хранится норма
 раскладывает по категориям (винтовки, снайперские, ПП, пистолеты, тяжёлое, ножи, перчатки,
 агенты, zeus, стикеры, граффити, музыка, кейсы) и определяет оружие; понимает префиксы
 `StatTrak™` и `Souvenir`. Каталог пополняется ещё и при синхронизации инвентаря.
+
+**Редкость каталога.** `skins.rarity` хранит канонический слаг. Откуда берётся: цвет и
+тип предмета из Steam Market при импорте (`asset_description.name_color` / `type`), теги
+инвентаря при синхронизации (`rarity_slug` понимает русские и английские формы), а старые
+записи заполняет `scripts/import_rarities.py` из датасета CSGO-API (на рабочей базе закрыл
+2012 записи из 3165). API отдаёт уже слаг, поэтому цвета совпадают на всех экранах.
+
+**Каталог «на обмене».** Основная вкладка каталога показывает только скины, которые реально
+можно получить: они выставлены в активных объявлениях доски. Данные — `skins.available_items`
+(`offers` → `json_each(items_offered)` → `items`, группировка по имени скина, счётчики
+`offers` и `owners`); фильтры и дерево разделов считаются по тому же набору. Вторая вкладка —
+весь Steam-каталог (`skins.list_items`), он нужен шагу «хочу» и фильтрам по износу, цене и
+StatTrak.
 
 **Поиск «хочу».** `utils/skin_query.py` разбирает свободный текст: синонимы и русские
 названия («асимов» → Asiimov, «керамбит» → Karambit, «катовице» → Katowice, «нож» → ★),
@@ -136,8 +156,22 @@ StatTrak. `services/skin_search.py` ищет по шагам: с износом 
    сторона получают уведомление. Открытый спор на сделку только один (уникальный индекс
    `idx_disputes_open_trade`), кнопка исчезает, пока спор не решён через /resolve.
 
-**Mini App.** `src/webapp/app.html` — табы: Инвентарь, Каталог, Доска, Создать, Мои, Сделки,
-Профиль, Рейтинг, Админ (только для 8851272459), Помощь. Авторизация: `initData`
+**Объявление живёт до обмена.** Доска, каталог «на обмене» и подбор видят объявления в
+`active` **и** `in_trade`: раньше объявление исчезало, как только кто-то предлагал обмен.
+Предложить обмен можно и по объявлению в сделке — обмены независимы. Объявление становится
+`completed`, когда обе стороны нажали «📦 Получил» (`services/trades.settle_after_receipt`),
+а не в момент открытия сделки и не после 7-дневного Trade Protection. Если трейд откатили в
+Steam, объявление возвращается в `active`.
+
+**Подбор обменов.** `GET /api/offers?match=1` — только объявления, где хотят скин из
+инвентаря зрителя (`items.owner_names` + `offers.active_for_names`); в карточке поле
+`match` рисует бейдж «🤝 ваш скин». При публикации объявления бот пишет владельцам нужного
+скина (`offers.owners_wanting`, до 20 человек, кроме автора) — писать можно только тем, кто
+уже начинал диалог с ботом.
+
+**Mini App.** `src/webapp/app.html` — нижняя навигация из пяти разделов плюс «Ещё»: Инвентарь,
+Каталог, Доска, Сделки, Профиль, а в листе — Создать, Мои, Рейтинг, Админ (только для
+8851272459), Помощь. Авторизация: `initData`
 проверяется HMAC-SHA256 от `BOT_TOKEN` (`utils/telegram_auth.py`), без подписи `/api/*`
 отвечает 401. Админка закрыта и в интерфейсе, и на сервере.
 
@@ -161,15 +195,25 @@ StatTrak. `services/skin_search.py` ищет по шагам: с износом 
 загруженные страницы каталога в `Map` и на фоне предзагружает следующую.
 
 **API Mini App:** `/api/me`, `/api/profile/steam`, `/api/profile/refresh`, `/api/inventory`,
-`/api/inventory/sync`, `/api/catalog`, `/api/catalog/tree`, `/api/catalog/items`,
-`/api/offers` (GET доска, POST создание), `/api/my_offers`, `/api/offers/{id}/accept|cancel|
+`/api/inventory/sync`, `/api/catalog`, `/api/catalog/tree`, `/api/catalog/items` (весь Steam,
+фильтры `wear`/`min`/`max`/`st`/`sort`), `/api/catalog/available` и
+`/api/catalog/available/tree` (только то, что на обмене), `/api/offers` (GET доска с `q` и
+`match=1`, POST создание), `/api/my_offers`, `/api/offers/{id}/accept|cancel|
 delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|rollback|cancel|rate}`, `/api/trades/{id}/dispute`, `/api/rating`,
 `/api/admin/{stats|users|ban|disputes|disputes/{id}/resolve}`.
 
 ## Инфраструктура и запуск (что где живёт)
 
-- Bot API с домашней сети заблокирован провайдером. Работает только через прокси:
-  локальный Xray (VLESS) на `127.0.0.1:10808`, бот ходит через `TELEGRAM_PROXY`.
+- Bot API с домашней сети заблокирован провайдером. Рабочая схема на 25.11: подключённый
+  Cloudflare WARP (`warp-cli status` → Connected) и пустой `TELEGRAM_PROXY` — бот ходит
+  напрямую. Прежний Xray (VLESS `217.69.167.111:43000`) умер: REALITY-хендшейк не проходит
+  ни с одним `serverName`. `TgWsProxy_windows` (127.0.0.1:1443) — MTProto-прокси для
+  Telegram Desktop, HTTP/SOCKS не отдаёт и для Bot API не годится.
+- Порядок запуска: `python -m web_app` (8080) → `cloudflared tunnel --url http://localhost:8080
+  --logfile cloudflare.log` → `scripts/refresh_webapp_url.py` (берёт последний живой адрес)
+  → `python -m bot.main`. Бот читает `WEB_APP_URL` только при старте, поэтому после
+  перезапуска туннеля его нужно перезапустить.
+- Живой бот строго один: два поллера дают `TelegramConflictError` и штраф на токен.
 - Mini App требует HTTPS: используется `cloudflared tunnel --url http://localhost:8080`,
   адрес попадает в `WEB_APP_URL` (меняется при каждом перезапуске туннеля —
   `scripts/refresh_webapp_url.py`).
@@ -206,23 +250,22 @@ delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|rollback|cancel|rate
 - **Кэш каталога живёт в памяти веб-процесса**, поэтому прямой `INSERT` в `skins` мимо
   `import_catalog`/`sync_inventory` его не сбросит: писать в каталог только через сервисы
   (они поднимают `settings.catalog_version`) либо ждать `WEB_CACHE_TTL`.
-
-## Что осталось / идеи дальше
-
-1. ~~Оформление Mini App~~ — палитра из `themeParams`, карточки с цветом по редкости,
-   скелетоны загрузки, единые отступы и типографика.
-2. ~~Скорость~~ — TTL-кэш каталога с ETag/304, версия каталога для инвалидации,
-   предзагрузка следующей страницы каталога на клиенте.
-3. ~~ИИ-разбор совсем странных запросов~~ — `services/skin_query_llm.py` как последний
-   шаг `find_candidates`; включается ключом `LLM_API_KEY` в `.env`.
-4. ~~Автоматическая отправка Steam Trade Offer~~ — **не делаем**: официального метода в Steam
-   нет, а кастодиальная схема убита Trade Protection (7 дней холда + откат трейда) и SSAA §4C;
-   разбор с источниками — `reports/TELE-7.md` в драйве капитана. Вместо неё — холд и отмена
-   в модели доверия (п. 6–9 выше).
-5. Почистить историю git от отозванных токенов (`git filter-repo`) — по согласованию.
-6. ~~Убрать мусорные тестовые сделки~~ — готов `scripts/cleanup_test_trades.py`
-   (dry-run по умолчанию, `--apply` с бэкапом базы); на проде не запускался.
-7. ~~Споры из UI~~ — кнопка в боте и Mini App, `POST /api/trades/{id}/dispute`.
+- **Объявление закрывается по обмену, а не по сделке.** Доска и каталог «на обмене» смотрят
+  `active` **и** `in_trade`; `completed` ставится в `settle_after_receipt` (два «Получил»), а
+  откат трейда возвращает объявление в `active`. Не возвращать проверку «только active» —
+  на этом уже потеряли объявления до обмена.
+- **`cloudflare.log` накопительный**: в нём лежат адреса от прошлых запусков, и первый из них
+  мёртвый. `scripts/refresh_webapp_url.py` берёт последний и проверяет `/health`.
+- **Bot API и прокси.** Домашний провайдер блокирует Bot API; рабочий путь на 25.11 —
+  Cloudflare WARP плюс пустой `TELEGRAM_PROXY`. Xray (VLESS 217.69.167.111:43000) не
+  поднимает REALITY-хендшейк, `TgWsProxy` (127.0.0.1:1443) — MTProto-прокси для десктопа и
+  HTTP/SOCKS не отдаёт. WARP тоже делит IP с другими — при `429 Flood control` ждать, а не
+  перезапускать поллер в цикле.
+- **Бот читает `.env` один раз при старте**: после смены `WEB_APP_URL` или `TELEGRAM_PROXY`
+  его нужно перезапустить, иначе кнопка «Приложение» ведёт на старый адрес.
+- **`token` в git credential helper без scope `workflow`**: правки `.github/workflows/*.yml`
+  не пушатся (`refusing to allow ... without workflow scope`). Нужен токен с этим scope или
+  ручная правка через веб.
 
 ## Редкость каталога
 
@@ -302,3 +345,19 @@ Mini App: полоса фильтров под поиском (износ, це�
 - Объявление становится `completed`, когда обе стороны нажали «Получил» (`settle_after_receipt`),
   а не в момент открытия сделки. Если трейд отменили в Steam, объявление возвращается в `active`.
 - Подбор «подходят мне» тоже учитывает объявления в сделке.
+
+## Что осталось / идеи дальше
+
+Сделано в 0.2: редкость каталога, фильтры и поиск, каталог «на обмене», подбор обменов,
+споры из интерфейса, Trade Protection, объявления до обмена, мобильная раскладка, надёжность
+API, бэкапы, docker для веба, ИИ-фолбэк «хочу».
+
+1. Тесты обработчиков бота: сейчас основной вес в API и сервисах, у части хендлеров
+   проверки нет.
+2. История сделок и публичный профиль с рейтингом: в профиле видно только счётчики.
+3. Уведомления по расписанию: напоминать о сделке в `holding`, когда подходит `finalize_at`.
+4. Расширить `docker`-джоб CI (собирает образ) на публикацию образа, если появится VPS.
+5. Чистка истории git от отозванных токенов (`git filter-repo`) — по-прежнему только по
+   явной команде, рекомендую не делать: токены отозваны, а force push ломает клоны.
+6. Идеи продукта: вкладка «Ищут» (хотелки без выставленных скинов), чат внутри сделки,
+   автоматическое снятие объявлений по истечении срока.
