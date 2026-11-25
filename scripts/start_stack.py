@@ -10,6 +10,7 @@ Quick-туннель Cloudflare получает новый адрес при к
 """
 
 import argparse
+import json
 import pathlib
 import re
 import subprocess
@@ -50,6 +51,26 @@ def set_env_value(key: str, value: str) -> None:
     else:
         text = text.rstrip("\n") + f"\n{key}={value}\n"
     ENV.write_text(text, encoding="utf-8")
+
+
+def set_menu_button(token: str, url: str) -> bool:
+    """Кнопка «Приложение» в меню бота: без этого она остаётся на прошлом адресе туннеля."""
+    if not token or not url:
+        return False
+    payload = json.dumps(
+        {"menu_button": {"type": "web_app", "text": "Приложение", "web_app": {"url": url}}}
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/setChatMenuButton",
+        data=payload,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return bool(json.loads(response.read().decode("utf-8")).get("ok"))
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        print(f"меню: не удалось обновить кнопку — {error}")
+        return False
 
 
 def spawn(args: list[str], log: pathlib.Path) -> subprocess.Popen:
@@ -153,6 +174,9 @@ def main() -> int:
     if killed:
         print(f"бот: остановлено процессов — {killed}")
     start_bot()
+
+    if set_menu_button(env_value("BOT_TOKEN"), env_value("WEB_APP_URL")):
+        print("меню: кнопка «Приложение» обновлена")
 
     print()
     print(f"Mini App: {env_value('WEB_APP_URL')}")
