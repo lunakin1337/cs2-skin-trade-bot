@@ -688,7 +688,7 @@ async def _offer_action(request: web.Request, action: str) -> web.Response:
         return web.json_response({"error": "Предложение не найдено"}, status=404)
 
     if action == "accept":
-        if offer["status"] != "active":
+        if offer["status"] not in ("active", "in_trade"):
             return web.json_response({"error": "Предложение больше не активно"}, status=400)
         if offer["creator_id"] == user["id"]:
             return web.json_response({"error": "Нельзя принять своё предложение"}, status=400)
