@@ -160,3 +160,26 @@ async def finalized(
             "это помогает остальным выбирать контрагента.",
             web_app_url,
         )
+
+
+async def stale_trade(
+    bot: Bot, repos: Repositories, trade: Dict[str, Any], web_app_url: Optional[str] = None
+) -> None:
+    """Сделка висит без подтверждения: напомнить, что от сторон ждут шага."""
+    title = await _title(repos, trade)
+    # напоминаем только той стороне, которая ещё не подтвердила
+    pending = [
+        user_id
+        for role, user_id in (("buyer", trade.get("buyer_id")), ("seller", trade.get("seller_id")))
+        if not trade.get(f"{role}_confirmed_at")
+    ]
+    for user_id in pending:
+        await _send(
+            bot,
+            await _telegram_id(repos, user_id),
+            f"⏳ <b>Сделка #{trade['id']} ждёт подтверждения</b>\n\n"
+            f"{title}\n"
+            "Пока обе стороны не подтвердят, обмен не начнётся. "
+            "Если передумали — отмените сделку.",
+            web_app_url,
+        )

@@ -52,6 +52,7 @@ class BotConfig:
     telegram_proxy: str = ""
     parse_mode: str = "HTML"
     web_cache_ttl: int = 60
+    trade_reminder_minutes: int = 15
 
     @property
     def has_steam_api_key(self) -> bool:
@@ -88,6 +89,7 @@ def load_config() -> BotConfig:
         web_admin_token=os.getenv("WEB_ADMIN_TOKEN", "").strip(),
         telegram_proxy=os.getenv("TELEGRAM_PROXY", "").strip(),
         web_cache_ttl=_int_env("WEB_CACHE_TTL", 60),
+        trade_reminder_minutes=_int_env("TRADE_REMINDER_MINUTES", 15),
     )
 
 
