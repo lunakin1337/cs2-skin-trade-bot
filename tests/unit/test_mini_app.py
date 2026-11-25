@@ -103,3 +103,12 @@ def test_thumbnails_use_small_steam_variant():
     assert "function thumbUrl(url)" in html
     assert "/120fx120f" in html
     assert 'esc(thumbUrl(item.image))' in html
+
+
+def test_counterparty_profile_screen_present():
+    html = _html()
+
+    assert 'id="view-user"' in html
+    assert "async function loadUser(" in html
+    assert "counterpart_id" in html
+    assert 'switchTab("user")' in html
