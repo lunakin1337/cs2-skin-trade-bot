@@ -9,6 +9,19 @@ URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 ENV_PATH = pathlib.Path(".env")
 
 
+
+def _alive(url: str) -> bool:
+    """Туннель считается готовым, когда /health отвечает 200."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{url}/health", timeout=8) as response:
+            return response.status == 200
+    except (urllib.error.URLError, OSError):
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Обновить WEB_APP_URL из лога cloudflared")
     parser.add_argument("--log", default="cloudflare.log", help="Файл лога cloudflared")
@@ -21,10 +34,14 @@ def main() -> int:
     url = None
     for _ in range(args.timeout):
         if log_path.exists():
-            match = URL_RE.search(log_path.read_text(encoding="utf-8", errors="ignore"))
-            if match:
-                url = match.group(0)
-                break
+            # quic-туннель дописывает лог, поэтому нужен последний адрес, а не первый:
+            # в файле остаются ссылки от прошлых запусков
+            matches = URL_RE.findall(log_path.read_text(encoding="utf-8", errors="ignore"))
+            if matches:
+                candidate = matches[-1]
+                if _alive(candidate):
+                    url = candidate
+                    break
         time.sleep(1)
 
     if not url:
