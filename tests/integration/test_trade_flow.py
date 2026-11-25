@@ -127,8 +127,9 @@ class TestCompletion:
         assert buyer_after["trades_count"] == 0
         assert seller_after["trades_count"] == 0
 
+        # обмен состоялся: объявление уходит с доски, даже пока идёт Trade Protection
         offer = await repos.offers.get_by_id(record["offer_id"])
-        assert offer["status"] == "in_trade"
+        assert offer["status"] == "completed"
         assert any("Trade Protection" in alert for alert in alerts(session))
 
     async def test_holding_finalizes_after_deadline(self, bot, repos, trade, duo):

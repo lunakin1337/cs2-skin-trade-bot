@@ -67,7 +67,7 @@ async def cb_accept_offer(callback: CallbackQuery, repos: Repositories) -> None:
     if not offer:
         await notify(callback, "Предложение не найдено", alert=True)
         return
-    if offer["status"] != "active":
+    if offer["status"] not in ("active", "in_trade"):
         await notify(callback, "Предложение больше не активно", alert=True)
         return
 

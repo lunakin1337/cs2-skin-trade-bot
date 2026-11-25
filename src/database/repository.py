@@ -477,9 +477,9 @@ class OfferRepository:
         """Поиск по доске: желаемый скин, свободный текст желания, название и описание."""
         tokens = [token for token in re.split(r"\s+", (query or "").strip()) if token][:5]
         if not tokens:
-            return "o.status = 'active'", []
+            return "o.status IN ('active', 'in_trade')", []
 
-        conditions = ["o.status = 'active'"]
+        conditions = ["o.status IN ('active', 'in_trade')"]
         params: List[Any] = []
         for token in tokens:
             conditions.append(
@@ -536,7 +536,7 @@ class OfferRepository:
             return []
         placeholders = ", ".join("?" for _ in unique)
         params: List[Any] = list(unique)
-        condition = f"o.status = 'active' AND o.wanted_name IN ({placeholders})"
+        condition = f"o.status IN ('active', 'in_trade') AND o.wanted_name IN ({placeholders})"
         if exclude_user_id is not None:
             condition += " AND o.creator_id != ?"
             params.append(exclude_user_id)
@@ -886,8 +886,12 @@ AVAILABLE_BASE_SQL = """
     JOIN json_each(o.items_offered) j
     JOIN items i ON i.id = j.value
     LEFT JOIN skins s ON s.market_hash_name = i.market_hash_name
-    WHERE o.status = 'active'
+    WHERE o.status IN ('active', 'in_trade')
 """
+
+
+# Объявление живёт на доске, пока обмен не завершён: в сделке оно всё ещё актуально.
+OPEN_OFFER_STATUSES = ("active", "in_trade")
 
 
 WEAR_NAMES = {

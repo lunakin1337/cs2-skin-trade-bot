@@ -70,6 +70,9 @@ async def settle_after_receipt(repos: Repositories, trade: dict) -> dict:
         return trade
 
     await repos.trades.set_holding(trade["id"], PROTECTION_DAYS)
+    # обмен состоялся: объявление больше не висит на доске, даже пока идёт Trade Protection
+    if trade.get("offer_id"):
+        await repos.offers.update_status(trade["offer_id"], "completed")
     return await repos.trades.get_by_id(trade["id"]) or trade
 
 
