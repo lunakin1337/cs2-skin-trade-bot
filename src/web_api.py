@@ -467,6 +467,83 @@ def _catalog_filters(request: web.Request) -> dict:
     }
 
 
+async def _available_tree_payload(request: web.Request) -> dict:
+    total, categories = await _repos(request).skins.available_tree()
+    return {
+        "total": total,
+        "categories": [
+            {
+                "code": category["code"],
+                "title": category_title(category["code"]),
+                "count": category["count"],
+                "weapons": category["weapons"],
+            }
+            for category in categories
+        ],
+    }
+
+
+async def api_catalog_available_tree(request: web.Request) -> web.Response:
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+    return await _cached_json(request, "catalog:available:tree", lambda: _available_tree_payload(request))
+
+
+async def _available_items_payload(
+    request: web.Request, category: str | None, weapon: str | None, query: str | None, page: int, size: int
+) -> dict:
+    repos = _repos(request)
+    total = await repos.skins.count_available(category=category, weapon=weapon, query=query)
+    items = await repos.skins.available_items(
+        category=category, weapon=weapon, query=query, limit=size, offset=page * size
+    )
+    return {
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": max(1, -(-total // size)),
+        "items": [
+            {
+                "name": item["market_hash_name"],
+                "short": short_name(item["market_hash_name"]),
+                "price": item.get("price"),
+                "image": item.get("icon_url"),
+                "category": item.get("category"),
+                "weapon": item.get("weapon"),
+                "rarity": rarity_slug(item.get("rarity"), item["market_hash_name"]),
+                "offers": item.get("offers") or 0,
+                "owners": item.get("owners") or 0,
+            }
+            for item in items
+        ],
+    }
+
+
+async def api_catalog_available(request: web.Request) -> web.Response:
+    """Скины, которые сейчас можно получить: они выставлены в активных объявлениях."""
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    category = request.query.get("category") or None
+    weapon = request.query.get("weapon") or None
+    query = request.query.get("q") or None
+    try:
+        page = max(0, int(request.query.get("page", "0")))
+    except ValueError:
+        page = 0
+    try:
+        size = min(50, max(1, int(request.query.get("size", "20"))))
+    except ValueError:
+        size = 20
+
+    key = f"catalog:available:{category}:{weapon}:{query}:{page}:{size}"
+    return await _cached_json(
+        request, key, lambda: _available_items_payload(request, category, weapon, query, page, size)
+    )
+
+
 async def api_catalog_items(request: web.Request) -> web.Response:
     user = await _api_user(request)
     if user is None:
@@ -1033,6 +1110,8 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/catalog", api_catalog)
     app.router.add_get("/api/catalog/tree", api_catalog_tree)
     app.router.add_get("/api/catalog/items", api_catalog_items)
+    app.router.add_get("/api/catalog/available", api_catalog_available)
+    app.router.add_get("/api/catalog/available/tree", api_catalog_available_tree)
     app.router.add_get("/api/offers", api_offers_board)
     app.router.add_post("/api/offers", api_offers_create)
     app.router.add_get("/api/my_offers", api_my_offers)
