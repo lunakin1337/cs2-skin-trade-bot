@@ -1,0 +1,44 @@
+[project]
+name = "cs2-skin-trade-bot"
+version = "0.2.0"
+description = "P2P CS2 Skin Trade Bot for Telegram"
+requires-python = ">=3.11"
+dependencies = [
+    "aiogram>=3.7.0",
+    "aiosqlite==0.20.0",
+    "aiohttp>=3.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.23,<1",
+    "ruff==0.4.0",
+    "esprima==4.0.1",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["bot*", "config*", "database*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
