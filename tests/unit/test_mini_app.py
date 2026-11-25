@@ -62,3 +62,27 @@ def test_catalog_filters_present():
         assert element in html
     assert 'params.set("wear"' in html
     assert 'params.set("st", "1")' in html
+
+
+def test_pickers_have_search_and_sort():
+    html = _html()
+
+    for element in ['id="counter-search"', 'id="counter-sort"', 'id="create-search"', 'id="create-sort"']:
+        assert element in html
+    assert 'state.counter.sort = state.counter.sort === "price_desc"' in html
+
+
+def test_buttons_disabled_without_selection():
+    html = _html()
+
+    assert '$("counter-send").disabled = count === 0;' in html
+    assert '$("create-publish").disabled = state.picked.size === 0;' in html
+
+
+def test_back_button_and_haptics_are_wired():
+    html = _html()
+
+    assert "tg.BackButton.onClick(goBack)" in html
+    assert "function syncBackButton()" in html
+    assert "tabHistory: []" in html
+    assert "tg.HapticFeedback.notificationOccurred" in html

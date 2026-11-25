@@ -790,6 +790,10 @@
   <section id="view-create" hidden>
     <div class="field">
       <span>Что отдаёте — выберите скины</span>
+      <div class="toolbar">
+        <input id="create-search" class="search" placeholder="Поиск по инвентарю" autocomplete="off">
+        <button class="ghost" id="create-sort">Цена ↓</button>
+      </div>
       <div id="create-items"></div>
     </div>
     <div class="toolbar">
@@ -814,6 +818,10 @@
       <button class="ghost" id="counter-back">← Назад к доске</button>
     </div>
     <div class="field"><span>Выберите скины из своего инвентаря, которые отдаёте</span></div>
+    <div class="toolbar">
+      <input id="counter-search" class="search" placeholder="Поиск по инвентарю" autocomplete="off">
+      <button class="ghost" id="counter-sort">Цена ↓</button>
+    </div>
     <div id="counter-items"></div>
     <div class="toolbar">
       <div class="stat" id="counter-picked">Выбрано: 0</div>
@@ -880,7 +888,11 @@
 <script>
 (function () {
   const tg = window.Telegram ? window.Telegram.WebApp : null;
-  if (tg) { tg.ready(); tg.expand(); }
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    try { tg.disableVerticalSwipes && tg.disableVerticalSwipes(); } catch (error) { /* старый клиент */ }
+  }
 
   const CATALOG_PAGE_SIZE = 25;
   const RARITY_TONES = [
@@ -903,6 +915,7 @@
   const state = {
     profile: null,
     tab: "inventory",
+    tabHistory: [],
     invPage: 0,
     invPages: 1,
     boardPage: 0,
@@ -910,13 +923,16 @@
     boardScope: "all",
     boardPages: 1,
     picked: new Set(),
+    inventoryItems: [],
+    inventoryQuery: '',
+    inventorySort: 'price_desc',
     wanted: null,
     inventoryItems: [],
     catalog: { source: "board", category: null, weapon: null, query: "", page: 0, pages: 1, wear: null, min: "", max: "", sort: "offers_desc", stattrak: false },
     catalogTrees: {},
     catalogTree: null,
     catalogPages: new Map(),
-    counter: { offerId: null, picked: new Set() },
+    counter: { offerId: null, picked: new Set(), items: [], query: '', sort: 'price_desc' },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -960,7 +976,19 @@
     return data;
   }
 
+  function haptic(kind) {
+    if (!tg || !tg.HapticFeedback) return;
+    try {
+      if (kind === "ok") tg.HapticFeedback.notificationOccurred("success");
+      else if (kind === "error") tg.HapticFeedback.notificationOccurred("error");
+      else tg.HapticFeedback.impactOccurred("light");
+    } catch (error) {
+      /* клиент без haptic */
+    }
+  }
+
   function notice(text, kind) {
+    haptic(kind === "error" ? "error" : kind === "ok" ? "ok" : "tap");
     const box = $("notice");
     if (!text) { box.hidden = true; return; }
     box.className = "notice " + (kind || "");
@@ -1125,7 +1153,7 @@
     const thumb = item.image
       ? '<img src="' + esc(item.image) + '" alt="" loading="lazy">'
       : '<span class="thumb-stub">' + esc(initials(item.name)) + "</span>";
-    const picked = opts.pickable && state.picked.has(item.id);
+    const picked = opts.pickable && (opts.picked !== undefined ? opts.picked : state.picked.has(item.id));
 
     return '<article class="card r-' + tone + (picked ? " picked" : "") + '"' +
       (opts.pickable ? ' data-item="' + item.id + '"' : "") + ">" +
@@ -1484,22 +1512,54 @@
     await switchTab("counter");
   }
 
+  function sortPicked(items, sort) {
+    const list = items.slice();
+    if (sort === "price_desc") list.sort((a, b) => (b.price || 0) - (a.price || 0));
+    else if (sort === "price_asc") list.sort((a, b) => (a.price || 0) - (b.price || 0));
+    else list.sort((a, b) => String(a.name).localeCompare(String(b.name), "ru"));
+    return list;
+  }
+
+  function filterItems(items, query) {
+    const needle = String(query || "").trim().toLowerCase();
+    if (!needle) return items;
+    return items.filter((item) => String(item.name || "").toLowerCase().indexOf(needle) >= 0);
+  }
+
   async function loadCounter() {
     const container = $("counter-items");
     skeletonCards(container, 6);
 
     const data = await api("/api/inventory?page=0&size=50");
-    const items = data.items.filter((item) => item.tradable);
-    if (!items.length) {
+    state.counter.items = data.items.filter((item) => item.tradable);
+    renderCounterItems();
+  }
+
+  function renderCounterItems() {
+    const container = $("counter-items");
+    const items = sortPicked(filterItems(state.counter.items, state.counter.query), state.counter.sort);
+    if (!state.counter.items.length) {
       empty_(container, "🔒", "Нет торгуемых скинов — синхронизируйте инвентарь.");
+      updateCounterLabel();
       return;
     }
-    container.innerHTML = '<div class="grid">' + items.map((item) => itemCard(item, { pickable: true })).join("") + "</div>";
+    if (!items.length) {
+      empty_(container, "🔍", "Ничего не нашлось по запросу «" + esc(state.counter.query) + "».");
+      updateCounterLabel();
+      return;
+    }
+    container.innerHTML = '<div class="grid">' +
+      items.map((item) => {
+        const picked = state.counter.picked.has(item.id);
+        return itemCard(item, { pickable: true, picked: picked });
+      }).join("") + "</div>";
     updateCounterLabel();
   }
 
   function updateCounterLabel() {
-    $("counter-picked").textContent = "Выбрано: " + state.counter.picked.size;
+    const count = state.counter.picked.size;
+    $("counter-picked").textContent = "Выбрано: " + count;
+    $("counter-send").disabled = count === 0;
   }
 
   $("counter-items").addEventListener("click", (event) => {
@@ -1509,10 +1569,22 @@
     if (state.counter.picked.has(itemId)) state.counter.picked.delete(itemId);
     else state.counter.picked.add(itemId);
     card.classList.toggle("picked", state.counter.picked.has(itemId));
+    haptic("tap");
     updateCounterLabel();
   });
 
   $("counter-back").addEventListener("click", () => switchTab("board"));
+
+  $("counter-search").addEventListener("input", () => {
+    state.counter.query = $("counter-search").value;
+    renderCounterItems();
+  });
+
+  $("counter-sort").addEventListener("click", () => {
+    state.counter.sort = state.counter.sort === "price_desc" ? "price_asc" : "price_desc";
+    $("counter-sort").textContent = state.counter.sort === "price_desc" ? "Цена ↓" : "Цена ↑";
+    renderCounterItems();
+  });
 
   $("counter-send").addEventListener("click", async () => {
     if (!state.counter.offerId) return;
@@ -1704,10 +1776,18 @@
 
   function renderCreateItems() {
     const container = $("create-items");
-    const items = state.inventoryItems.filter((item) => item.tradable);
+    const tradable = state.inventoryItems.filter((item) => item.tradable);
 
-    if (!items.length) {
+    if (!tradable.length) {
       empty_(container, "🔒", "Нет торгуемых скинов — синхронизируйте инвентарь.");
+      updatePickedLabel();
+      return;
+    }
+
+    const items = sortPicked(filterItems(tradable, state.inventoryQuery), state.inventorySort);
+    if (!items.length) {
+      empty_(container, "🔍", "Ничего не нашлось по запросу «" + esc(state.inventoryQuery) + "».");
+      updatePickedLabel();
       return;
     }
 
@@ -1718,7 +1798,19 @@
 
   function updatePickedLabel() {
     $("create-picked").textContent = "Выбрано: " + state.picked.size;
+    $("create-publish").disabled = state.picked.size === 0;
   }
+
+  $("create-search").addEventListener("input", () => {
+    state.inventoryQuery = $("create-search").value;
+    renderCreateItems();
+  });
+
+  $("create-sort").addEventListener("click", () => {
+    state.inventorySort = state.inventorySort === "price_desc" ? "price_asc" : "price_desc";
+    $("create-sort").textContent = state.inventorySort === "price_desc" ? "Цена ↓" : "Цена ↑";
+    renderCreateItems();
+  });
 
   $("create-items").addEventListener("click", (event) => {
     const card = event.target.closest("[data-item]");
@@ -1727,6 +1819,7 @@
     if (state.picked.has(itemId)) state.picked.delete(itemId);
     else state.picked.add(itemId);
     card.classList.toggle("picked", state.picked.has(itemId));
+    haptic("tap");
     updatePickedLabel();
   });
 
@@ -2042,7 +2135,41 @@
     sheet.hidden = !sheet.hidden;
   }
 
+  const TAB_HOME = { counter: "board", create: null };
+
+  function historyPush(tab) {
+    if (state.tab && state.tab !== tab) state.tabHistory.push(state.tab);
+    if (state.tabHistory.length > 20) state.tabHistory.shift();
+  }
+
+  function backTarget() {
+    if (state.tab === "counter") return "board";
+    const previous = state.tabHistory.pop();
+    return previous || null;
+  }
+
+  function syncBackButton() {
+    if (!tg || !tg.BackButton) return;
+    try {
+      if (state.tab === "counter" || state.tabHistory.length) tg.BackButton.show();
+      else tg.BackButton.hide();
+    } catch (error) {
+      /* клиент без BackButton */
+    }
+  }
+
+  function goBack() {
+    const target = backTarget();
+    if (target) switchTab(target);
+    else if (tg && tg.close) tg.close();
+  }
+
+  if (tg && tg.BackButton && tg.BackButton.onClick) {
+    tg.BackButton.onClick(goBack);
+  }
+
   async function switchTab(tab) {
+    if (state.tab && state.tab !== tab) historyPush(tab);
     state.tab = tab;
     document.querySelectorAll("#tabs button").forEach((button) => {
       button.classList.toggle("active", button.getAttribute("data-tab") === tab);
@@ -2054,6 +2181,7 @@
       section.hidden = section.id !== "view-" + tab;
     });
     window.scrollTo(0, 0);
+    syncBackButton();
     try {
       const loader = loaders[tab];
       if (loader) await loader();
