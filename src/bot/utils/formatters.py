@@ -95,7 +95,9 @@ def short_name(market_hash_name: str | None, limit: int = 32) -> str:
     if not market_hash_name:
         return "—"
     name = re.sub(r"\s*\([^)]*\)\s*$", "", market_hash_name).strip()
-    return name[:limit]
+    if len(name) > limit:
+        name = name[: limit - 1].rstrip() + "…"
+    return name
 
 
 def format_item(item: dict, index: int | None = None) -> str:
