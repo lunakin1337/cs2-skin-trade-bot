@@ -86,3 +86,20 @@ def test_back_button_and_haptics_are_wired():
     assert "function syncBackButton()" in html
     assert "tabHistory: []" in html
     assert "tg.HapticFeedback.notificationOccurred" in html
+
+
+def test_auto_refresh_and_badge_present():
+    html = _html()
+
+    assert 'id="badge-trades"' in html
+    assert "AUTO_REFRESH_MS" in html
+    assert "function refreshIncomingCount()" in html
+    assert "setInterval(" in html
+
+
+def test_thumbnails_use_small_steam_variant():
+    html = _html()
+
+    assert "function thumbUrl(url)" in html
+    assert "/120fx120f" in html
+    assert 'esc(thumbUrl(item.image))' in html

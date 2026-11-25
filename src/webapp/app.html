@@ -220,6 +220,24 @@
     transition: color 0.15s ease;
   }
   nav.tabbar button .ico { font-size: 20px; line-height: 1; }
+  nav.tabbar button { position: relative; }
+  nav.tabbar .tab-badge {
+    position: absolute;
+    top: 4px;
+    right: 50%;
+    transform: translateX(18px);
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+  }
+  nav.tabbar .tab-badge[hidden] { display: none; }
   nav.tabbar button .lbl {
     max-width: 100%;
     overflow: hidden;
@@ -708,7 +726,7 @@
     <button data-tab="inventory" class="active"><span class="ico">🎒</span><span class="lbl">Инвентарь</span></button>
     <button data-tab="catalog"><span class="ico">🗂</span><span class="lbl">Каталог</span></button>
     <button data-tab="board"><span class="ico">📋</span><span class="lbl">Доска</span></button>
-    <button data-tab="trades"><span class="ico">🔄</span><span class="lbl">Сделки</span></button>
+    <button data-tab="trades"><span class="ico">🔄</span><span class="lbl">Сделки</span><span class="tab-badge" id="badge-trades" hidden></span></button>
     <button data-tab="profile"><span class="ico">👤</span><span class="lbl">Профиль</span></button>
     <button type="button" id="tabs-more-btn" aria-label="Ещё"><span class="ico">⋯</span><span class="lbl">Ещё</span></button>
   </div>
@@ -1087,6 +1105,13 @@
       .replace(/\s*\((Factory New|Minimal Wear|Field-Tested|Well-Worn|Battle-Scarred)\)\s*$/, "");
   }
 
+  // Steam отдаёт картинку по размеру в адресе: полноразмерные в карточке не нужны,
+  // на телефоне это 200+ КБ на карточку против 20 КБ у превью
+  function thumbUrl(url) {
+    const text = String(url || "");
+    return text.replace(/\/(\d+)fx(\d+)f\/?$/, "/$1fx$2f").replace("/360fx360f", "/120fx120f").replace("/330x192", "/150x88");
+  }
+
   function initials(name) {
     const words = String(name || "").split(/[|]/).pop().trim().split(/\s+/).slice(0, 2);
     return words.map((word) => word.charAt(0).toUpperCase()).join("") || "?";
@@ -1151,7 +1176,7 @@
     if (item.exterior) badges.push('<span class="badge">' + esc(item.exterior) + "</span>");
     if (!item.tradable) badges.push('<span class="badge lock">🔒 не торгуется</span>');
     const thumb = item.image
-      ? '<img src="' + esc(item.image) + '" alt="" loading="lazy">'
+      ? '<img src="' + esc(thumbUrl(item.image)) + '" alt="" loading="lazy" decoding="async">'
       : '<span class="thumb-stub">' + esc(initials(item.name)) + "</span>";
     const picked = opts.pickable && (opts.picked !== undefined ? opts.picked : state.picked.has(item.id));
 
@@ -1341,7 +1366,7 @@
       badges.push('<span class="badge">🤝 ' + item.offers + " " + plural(item.offers, "предложение", "предложения", "предложений") + "</span>");
     }
     const thumb = item.image
-      ? '<img src="' + esc(item.image) + '" alt="" loading="lazy">'
+      ? '<img src="' + esc(thumbUrl(item.image)) + '" alt="" loading="lazy" decoding="async">'
       : '<span class="thumb-stub">' + esc(initials(item.name)) + "</span>";
 
     const actions = state.catalog.source === "board"
@@ -2168,6 +2193,49 @@
     tg.BackButton.onClick(goBack);
   }
 
+  const AUTO_REFRESH_MS = 20000;
+  let autoRefreshTimer = null;
+  let unseenTrades = 0;
+
+  function setTradesBadge(count) {
+    const badge = $("badge-trades");
+    if (!badge) return;
+    if (!count) {
+      badge.hidden = true;
+      badge.textContent = "";
+      return;
+    }
+    badge.hidden = false;
+    badge.textContent = count > 9 ? "9+" : String(count);
+  }
+
+  async function refreshIncomingCount() {
+    try {
+      const data = await api("/api/trades");
+      const waiting = (data.items || []).filter((trade) => trade.actions && trade.actions.length && trade.status !== "completed").length;
+      if (state.tab !== "trades") setTradesBadge(waiting);
+      else setTradesBadge(0);
+      return waiting;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    autoRefreshTimer = setInterval(() => {
+      if (document.hidden) return;
+      if (state.tab === "trades") loadTrades().catch(() => {});
+      else if (state.tab === "board") loadBoard(state.boardPage).catch(() => {});
+      else refreshIncomingCount();
+    }, AUTO_REFRESH_MS);
+  }
+
+  function stopAutoRefresh() {
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+
   async function switchTab(tab) {
     if (state.tab && state.tab !== tab) historyPush(tab);
     state.tab = tab;
@@ -2182,6 +2250,7 @@
     });
     window.scrollTo(0, 0);
     syncBackButton();
+    if (tab === "trades") setTradesBadge(0);
     try {
       const loader = loaders[tab];
       if (loader) await loader();
@@ -2205,6 +2274,12 @@
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeMore();
+  });
+
+  refreshIncomingCount().catch(() => {});
+  startAutoRefresh();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshIncomingCount().catch(() => {});
   });
 
   loadMe()
