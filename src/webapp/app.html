@@ -120,15 +120,18 @@
 
   body {
     margin: 0;
-    padding: 0 0 calc(28px + env(safe-area-inset-bottom, 0px));
+    padding: 0 0 calc(78px + env(safe-area-inset-bottom, 0px));
     background: var(--bg);
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     font-size: var(--fs-md);
     line-height: 1.45;
+    overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     -webkit-tap-highlight-color: transparent;
   }
+
+  html { -webkit-text-size-adjust: 100%; }
 
   body::before {
     content: "";
@@ -183,41 +186,76 @@
   .pill.rating { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
   .pill.warn { color: var(--danger); border-color: var(--danger); background: transparent; }
 
-  nav.tabs {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    display: flex;
-    gap: var(--sp-2);
-    padding: var(--sp-2) var(--sp-4);
-    overflow-x: auto;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border);
-    scrollbar-width: none;
+  nav.tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -6px 20px rgba(16, 24, 40, 0.06);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
-  nav.tabs::-webkit-scrollbar { display: none; }
-  nav.tabs button {
-    flex: 0 0 auto;
-    display: inline-flex;
+  nav.tabbar .tabbar-row {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    align-items: stretch;
+  }
+  nav.tabbar button {
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 8px 13px;
-    border-radius: 999px;
+    justify-content: center;
+    gap: 2px;
+    min-height: 56px;
+    padding: 6px 2px 7px;
+    border: none;
+    background: transparent;
+    color: var(--hint);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+    transition: color 0.15s ease;
+  }
+  nav.tabbar button .ico { font-size: 20px; line-height: 1; }
+  nav.tabbar button .lbl {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  nav.tabbar button.active { color: var(--accent); }
+  nav.tabbar button:active { transform: scale(0.94); }
+
+  nav.tabbar .more-sheet {
+    position: absolute;
+    right: var(--sp-2);
+    bottom: calc(100% + var(--sp-2));
+    display: flex;
+    flex-direction: column;
+    min-width: 168px;
+    padding: var(--sp-1);
+    border-radius: var(--r-md);
     border: 1px solid var(--border);
     background: var(--surface);
-    color: var(--text-soft);
+    box-shadow: var(--shadow);
+  }
+  nav.tabbar .more-sheet[hidden] { display: none; }
+  nav.tabbar .more-sheet button {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--sp-2);
+    min-height: 44px;
+    padding: 10px var(--sp-3);
+    border-radius: var(--r-sm);
+    color: var(--text);
     font-size: var(--fs-sm);
-    font-weight: 600;
-    white-space: nowrap;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    text-align: left;
   }
-  nav.tabs button.active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--accent-text);
-    box-shadow: var(--shadow-sm);
-  }
-  nav.tabs button:active { transform: scale(0.97); }
+  nav.tabbar .more-sheet button .ico { font-size: 17px; }
+  nav.tabbar .more-sheet button.active { color: var(--accent); background: var(--accent-soft); }
 
   main { position: relative; z-index: 1; padding: var(--sp-3) var(--sp-4) 0; }
   section[hidden] { display: none; }
@@ -549,6 +587,68 @@
   .notice.ok { color: var(--ok); border-color: var(--ok); }
 
   a { color: var(--link); }
+
+  /* ---------- мобильный вид ---------- */
+
+  .action,
+  .ghost {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .ghost.tiny { min-height: 34px; }
+  .chips button { min-height: 38px; display: inline-flex; align-items: center; }
+  .card .actions .ghost { min-height: 40px; }
+  .row .actions > * { flex: 1 1 auto; }
+
+  @media (max-width: 480px) {
+    main { padding: var(--sp-3) var(--sp-3) 0; }
+    header.hero { padding: calc(var(--sp-3) + env(safe-area-inset-top, 0px)) var(--sp-3) var(--sp-2); gap: var(--sp-2); }
+    header.hero .avatar,
+    header.hero .avatar-stub { width: 44px; height: 44px; }
+    header.hero .who .name { font-size: 16px; }
+
+    .toolbar { gap: 6px; }
+    .toolbar .action,
+    .toolbar .ghost { flex: 1 1 auto; }
+
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2); }
+    .card .thumb { height: 86px; }
+    .card .thumb img { max-height: 72px; }
+    .sk-thumb { height: 86px; }
+
+    .field input,
+    .field textarea,
+    input.search { font-size: 16px; }
+    input.search { flex: 1 1 100%; }
+
+    .row { padding: var(--sp-3) var(--sp-2) var(--sp-3); }
+    .row .head { flex-wrap: wrap; }
+    .row .actions > * { flex: 1 1 100%; }
+
+    .split { grid-template-columns: 1fr 1fr; }
+    .pager button { min-width: 48px; min-height: 44px; }
+  }
+
+  @media (max-width: 360px) {
+    nav.tabbar button { font-size: 9px; min-height: 52px; }
+    nav.tabbar button .ico { font-size: 18px; }
+    .split { grid-template-columns: 1fr; }
+    .card .thumb { height: 78px; }
+    .card .thumb img { max-height: 64px; }
+  }
+
+  @media (min-width: 900px) {
+    body { padding-bottom: var(--sp-6); }
+    main { max-width: 960px; margin: 0 auto; }
+    nav.tabbar { position: sticky; top: 0; bottom: auto; border-top: none; border-bottom: 1px solid var(--border); box-shadow: none; }
+    nav.tabbar .tabbar-row { max-width: 960px; margin: 0 auto; }
+    nav.tabbar button { flex-direction: row; gap: 8px; min-height: 48px; font-size: var(--fs-sm); }
+    nav.tabbar button .ico { font-size: 17px; }
+    nav.tabbar .more-sheet { bottom: auto; top: calc(100% + var(--sp-2)); right: max(var(--sp-4), calc((100vw - 960px) / 2 + var(--sp-4))); }
+  }
 </style>
 </head>
 <body>
@@ -560,17 +660,22 @@
   </div>
 </header>
 
-<nav class="tabs" id="tabs">
-  <button data-tab="inventory" class="active">🎒 Инвентарь</button>
-  <button data-tab="catalog">🗂 Каталог</button>
-  <button data-tab="board">📋 Доска</button>
-  <button data-tab="create">📝 Создать</button>
-  <button data-tab="mine">📂 Мои</button>
-  <button data-tab="trades">🔄 Сделки</button>
-  <button data-tab="profile">👤 Профиль</button>
-  <button data-tab="rating">⭐ Рейтинг</button>
-  <button data-tab="admin" id="tab-admin" hidden>🛠 Админ</button>
-  <button data-tab="help">❓ Помощь</button>
+<nav class="tabbar" id="tabs">
+  <div class="more-sheet" id="tabs-more" hidden>
+    <button data-tab="create"><span class="ico">📝</span><span class="lbl">Создать</span></button>
+    <button data-tab="mine"><span class="ico">📂</span><span class="lbl">Мои</span></button>
+    <button data-tab="rating"><span class="ico">⭐</span><span class="lbl">Рейтинг</span></button>
+    <button data-tab="admin" id="tab-admin" hidden><span class="ico">🛠</span><span class="lbl">Админ</span></button>
+    <button data-tab="help"><span class="ico">❓</span><span class="lbl">Помощь</span></button>
+  </div>
+  <div class="tabbar-row">
+    <button data-tab="inventory" class="active"><span class="ico">🎒</span><span class="lbl">Инвентарь</span></button>
+    <button data-tab="catalog"><span class="ico">🗂</span><span class="lbl">Каталог</span></button>
+    <button data-tab="board"><span class="ico">📋</span><span class="lbl">Доска</span></button>
+    <button data-tab="trades"><span class="ico">🔄</span><span class="lbl">Сделки</span></button>
+    <button data-tab="profile"><span class="ico">👤</span><span class="lbl">Профиль</span></button>
+    <button type="button" id="tabs-more-btn" aria-label="Ещё"><span class="ico">⋯</span><span class="lbl">Ещё</span></button>
+  </div>
 </nav>
 
 <main>
@@ -1650,14 +1755,33 @@
     help: async () => {},
   };
 
+  const PRIMARY_TABS = ["inventory", "catalog", "board", "trades", "profile"];
+
+  function closeMore() {
+    const sheet = $("tabs-more");
+    if (sheet) sheet.hidden = true;
+    const btn = $("tabs-more-btn");
+    if (btn) btn.classList.remove("force-open");
+  }
+
+  function toggleMore() {
+    const sheet = $("tabs-more");
+    if (!sheet) return;
+    sheet.hidden = !sheet.hidden;
+  }
+
   async function switchTab(tab) {
     state.tab = tab;
     document.querySelectorAll("#tabs button").forEach((button) => {
       button.classList.toggle("active", button.getAttribute("data-tab") === tab);
     });
+    const moreBtn = $("tabs-more-btn");
+    if (moreBtn) moreBtn.classList.toggle("active", !PRIMARY_TABS.includes(tab));
+    closeMore();
     document.querySelectorAll("main section").forEach((section) => {
       section.hidden = section.id !== "view-" + tab;
     });
+    window.scrollTo(0, 0);
     try {
       const loader = loaders[tab];
       if (loader) await loader();
@@ -1667,8 +1791,20 @@
   }
 
   $("tabs").addEventListener("click", (event) => {
+    const moreBtn = event.target.closest("#tabs-more-btn");
+    if (moreBtn) { toggleMore(); return; }
     const button = event.target.closest("button[data-tab]");
     if (button) switchTab(button.getAttribute("data-tab"));
+  });
+
+  document.addEventListener("click", (event) => {
+    const sheet = $("tabs-more");
+    if (!sheet || sheet.hidden) return;
+    if (!event.target.closest("#tabs")) closeMore();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeMore();
   });
 
   loadMe()
