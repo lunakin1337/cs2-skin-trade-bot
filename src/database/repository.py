@@ -816,9 +816,9 @@ class SkinRepository:
                 """
                 INSERT INTO skins (
                     market_hash_name, name, price_text, price_value, icon_url,
-                    category, weapon, updated_at
+                    category, weapon, rarity, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(market_hash_name) DO UPDATE SET
                     name = excluded.name,
                     price_text = COALESCE(excluded.price_text, skins.price_text),
@@ -826,6 +826,7 @@ class SkinRepository:
                     icon_url = COALESCE(excluded.icon_url, skins.icon_url),
                     category = COALESCE(excluded.category, skins.category),
                     weapon = COALESCE(excluded.weapon, skins.weapon),
+                    rarity = COALESCE(excluded.rarity, skins.rarity),
                     updated_at = datetime('now')
                 """,
                 (
@@ -836,6 +837,7 @@ class SkinRepository:
                     skin.get("icon_url"),
                     skin.get("category"),
                     skin.get("weapon"),
+                    skin.get("rarity"),
                 ),
             )
         await self.db.commit()

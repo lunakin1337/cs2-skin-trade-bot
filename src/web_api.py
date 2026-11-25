@@ -24,7 +24,7 @@ from bot.utils.formatters import (
     short_name,
     wear_abbr,
 )
-from bot.utils.skin_categories import CATEGORY_ORDER, category_title
+from bot.utils.skin_categories import CATEGORY_ORDER, category_title, rarity_slug
 from bot.utils.steam import TradeUrl, get_steam_client, SteamError, parse_trade_url
 from bot.utils.telegram_auth import parse_init_data
 from bot.utils.validators import validate_steam_id64, validate_trade_url
@@ -354,7 +354,7 @@ async def _catalog_search_payload(request: web.Request, query: str) -> dict:
             {
                 "name": row["market_hash_name"],
                 "price": row.get("price_text"),
-                "rarity": rarities.get(row["market_hash_name"]),
+                "rarity": rarity_slug(row.get("rarity") or rarities.get(row["market_hash_name"]), row["market_hash_name"]),
             }
             for row in found
         ],
@@ -426,7 +426,7 @@ async def _catalog_items_payload(
                 "image": item.get("icon_url"),
                 "category": item.get("category"),
                 "weapon": item.get("weapon"),
-                "rarity": rarities.get(item["market_hash_name"]),
+                "rarity": rarity_slug(item.get("rarity") or rarities.get(item["market_hash_name"]), item["market_hash_name"]),
             }
             for item in items
         ],

@@ -6,7 +6,7 @@ import logging
 
 import aiohttp
 
-from bot.utils.skin_categories import classify
+from bot.utils.skin_categories import classify, rarity_from_market
 from catalog_cache import bump_catalog_version
 from database.repository import Repositories
 
@@ -24,11 +24,13 @@ def _row(result: dict) -> dict:
     price_cents = result.get("sell_price")
     price_value = round(price_cents / 100, 2) if isinstance(price_cents, (int, float)) else None
     category, weapon = classify(name)
+    asset = result.get("asset_description") or {}
     return {
         "market_hash_name": name,
         "name": result.get("name") or name,
         "category": category,
         "weapon": weapon,
+        "rarity": rarity_from_market(asset.get("name_color"), asset.get("type"), name),
         "price_text": (result.get("sell_price_text") or "").strip() or None,
         "price_value": price_value,
         "icon_url": result.get("app_icon"),

@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 from bot.utils.prices import get_price_fetcher
-from bot.utils.skin_categories import classify
+from bot.utils.skin_categories import classify, rarity_slug
 from bot.utils.steam import SteamClient, SteamInventory, get_steam_client
 from catalog_cache import bump_catalog_version
 from config.settings import BotConfig
@@ -80,6 +80,7 @@ async def sync_inventory(
                 "icon_url": item.icon_url,
                 "category": classify(item.market_hash_name)[0],
                 "weapon": classify(item.market_hash_name)[1],
+                "rarity": rarity_slug(getattr(item, "rarity", None), item.market_hash_name),
             }
             for item in inventory.items
             if item.market_hash_name
