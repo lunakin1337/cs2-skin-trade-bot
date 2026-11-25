@@ -460,6 +460,13 @@
     margin-right: 5px;
   }
   .badge.lock { color: var(--hint); background: var(--surface-3); }
+  .badge.match {
+    margin-top: var(--sp-2);
+    color: var(--ok);
+    border-color: var(--ok);
+    background: transparent;
+    font-weight: 700;
+  }
 
   .row {
     background: var(--surface);
@@ -763,6 +770,10 @@
       <input id="board-search" class="search" placeholder="Что хотите найти: скин, оружие" autocomplete="off">
       <button class="ghost" id="board-find">🔍 Искать</button>
     </div>
+    <div class="chips" id="board-scope">
+      <button data-scope="all" class="active">Все объявления</button>
+      <button data-scope="match">🤝 Подходят мне</button>
+    </div>
     <div id="board-list"></div>
     <div class="pager" id="board-pager" hidden>
       <button id="board-prev">◀️</button>
@@ -891,6 +902,7 @@
     invPages: 1,
     boardPage: 0,
     boardQuery: "",
+    boardScope: "all",
     boardPages: 1,
     picked: new Set(),
     wanted: null,
@@ -1032,6 +1044,13 @@
       if (value.indexOf(pair[0]) >= 0) return pair[1];
     }
     return "default";
+  }
+
+  // «AK-47 | Redline (Field-Tested)» -> «AK-47 | Redline»
+  function shortSkin(name) {
+    return String(name || "")
+      .replace(/^(StatTrak™?|Souvenir)\s+/i, "")
+      .replace(/\s*\((Factory New|Minimal Wear|Field-Tested|Well-Worn|Battle-Scarred)\)\s*$/, "");
   }
 
   function initials(name) {
@@ -1465,6 +1484,9 @@
       actions.push('<button class="ghost danger" data-delete="' + offer.id + '">🗑 Удалить</button>');
     }
 
+    const matchBadge = offer.match
+      ? '<div class="badge match">🤝 ваш ' + esc(shortSkin(offer.match)) + "</div>"
+      : "";
     const status = offer.status === "active" ? "на доске"
       : offer.status === "in_trade" ? "в сделке"
       : offer.status === "completed" ? "завершено"
@@ -1480,7 +1502,7 @@
         '<div class="cell"><div class="label">Хочет</div><div class="sub">' + wanted + "</div>" +
           (comment && comment !== wanted ? '<div class="sub muted">' + esc(comment) + "</div>" : "") +
           "</div>" +
-      "</div>" +
+      "</div>" + matchBadge +
       '<div class="sub muted">' + esc(status) + "</div>" +
       (actions.length ? '<div class="actions">' + actions.join("") + "</div>" : "") +
       "</div>";
@@ -1491,17 +1513,22 @@
     skeletonRows(list, 3);
 
     const suffix = state.boardQuery ? "&q=" + encodeURIComponent(state.boardQuery) : "";
-    const data = await api("/api/offers?page=" + page + suffix);
+    const scope = state.boardScope === "match" ? "&match=1" : "";
+    const data = await api("/api/offers?page=" + page + suffix + scope);
     state.boardPage = data.page;
     state.boardPages = data.pages;
-    $("board-stat").innerHTML = state.boardQuery
-      ? "Найдено <b>" + data.total + "</b> по запросу «" + esc(state.boardQuery) + "»"
-      : "<b>" + data.total + "</b> активных объявлений";
+    $("board-stat").innerHTML = state.boardScope === "match"
+      ? "Подходят вашему инвентарю: <b>" + data.total + "</b>"
+      : state.boardQuery
+        ? "Найдено <b>" + data.total + "</b> по запросу «" + esc(state.boardQuery) + "»"
+        : "<b>" + data.total + "</b> активных объявлений";
 
     if (!data.items.length) {
-      empty_(list, "📋", state.boardQuery
-        ? "Ничего не нашлось. Попробуйте другое слово или уберите запрос."
-        : "Доска пуста. Создайте объявление во вкладке «Создать».");
+      empty_(list, "📋", state.boardScope === "match"
+        ? "Пока никто не ищет скины из вашего инвентаря. Загляните позже или синхронизируйте инвентарь."
+        : state.boardQuery
+          ? "Ничего не нашлось. Попробуйте другое слово или уберите запрос."
+          : "Доска пуста. Создайте объявление во вкладке «Создать».");
     } else {
       list.innerHTML = data.items.map((offer) => offerCard(offer, { acceptable: true })).join("");
     }
@@ -1511,6 +1538,16 @@
     $("board-prev").disabled = data.page === 0;
     $("board-next").disabled = data.page + 1 >= data.pages;
   }
+
+  $("board-scope").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-scope]");
+    if (!button) return;
+    state.boardScope = button.getAttribute("data-scope");
+    document.querySelectorAll("#board-scope button").forEach((item) => {
+      item.classList.toggle("active", item.getAttribute("data-scope") === state.boardScope);
+    });
+    loadBoard(0).catch(fail);
+  });
 
   function runBoardSearch() {
     state.boardQuery = $("board-search").value.trim();

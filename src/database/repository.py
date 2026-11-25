@@ -372,6 +372,16 @@ class ItemRepository:
         )
         return [dict(row) for row in await cur.fetchall()]
 
+    async def owner_names(self, owner_id: int, tradable_only: bool = True) -> List[str]:
+        """Имена скинов в инвентаре пользователя (по умолчанию только обмениваемых)."""
+        condition = "owner_id = ?"
+        if tradable_only:
+            condition += " AND is_tradable = 1"
+        cur = await self.db.execute(
+            f"SELECT DISTINCT market_hash_name FROM items WHERE {condition}", (owner_id,)
+        )
+        return [row["market_hash_name"] for row in await cur.fetchall() if row["market_hash_name"]]
+
     async def rarity_map(self, names: List[str]) -> Dict[str, str]:
         """Редкость по имени скина — из инвентарей, где Steam её уже отдал."""
         unique = [name for name in dict.fromkeys(names) if name]
@@ -513,6 +523,53 @@ class OfferRepository:
         cur = await self.db.execute(f"SELECT COUNT(*) AS cnt FROM offers o WHERE {where}", tuple(params))
         row = await cur.fetchone()
         return row["cnt"] if row else 0
+
+    async def active_for_names(
+        self, names: List[str], exclude_user_id: int | None = None, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Активные объявления, где хотят один из этих скинов (подбор под инвентарь)."""
+        unique = [name for name in dict.fromkeys(names) if name]
+        if not unique:
+            return []
+        placeholders = ", ".join("?" for _ in unique)
+        params: List[Any] = list(unique)
+        condition = f"o.status = 'active' AND o.wanted_name IN ({placeholders})"
+        if exclude_user_id is not None:
+            condition += " AND o.creator_id != ?"
+            params.append(exclude_user_id)
+        cur = await self.db.execute(
+            f"""
+            SELECT o.*, u.username, u.first_name, u.telegram_id, u.rating
+            FROM offers o
+            JOIN users u ON o.creator_id = u.id
+            WHERE {condition}
+            ORDER BY o.created_at DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
+    async def owners_wanting(self, wanted_name: str, exclude_user_id: int | None = None) -> List[Dict[str, Any]]:
+        """Кто держит в инвентаре этот скин — кандидаты на обмен по чужому объявлению."""
+        if not wanted_name:
+            return []
+        params: List[Any] = [wanted_name]
+        condition = "i.market_hash_name = ? AND i.is_tradable = 1"
+        if exclude_user_id is not None:
+            condition += " AND i.owner_id != ?"
+            params.append(exclude_user_id)
+        cur = await self.db.execute(
+            f"""
+            SELECT DISTINCT u.*
+            FROM items i
+            JOIN users u ON i.owner_id = u.id
+            WHERE {condition} AND COALESCE(u.is_banned, 0) = 0
+            LIMIT 50
+            """,
+            tuple(params),
+        )
+        return [dict(row) for row in await cur.fetchall()]
 
     async def get_by_creator(self, creator_id: int) -> List[Dict[str, Any]]:
         cur = await self.db.execute(

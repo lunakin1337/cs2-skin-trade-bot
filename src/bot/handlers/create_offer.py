@@ -187,6 +187,44 @@ async def process_wanted(message: Message, state: FSMContext, repos: Repositorie
     await _show_preview(message, state, repos, candidates, text)
 
 
+
+MATCH_NOTIFY_LIMIT = 20
+
+
+async def _notify_matching_owners(
+    message: Message,
+    repos: Repositories,
+    wanted_name: str | None,
+    offer_id: int,
+    author: dict,
+) -> None:
+    """Написать тем, у кого в инвентаре лежит нужный скин: у них есть что предложить."""
+    if not wanted_name:
+        return
+    try:
+        owners = await repos.offers.owners_wanting(wanted_name, exclude_user_id=author["id"])
+    except Exception as error:  # noqa: BLE001 — уведомление не должно ломать публикацию
+        logger.warning("Подбор: не удалось найти владельцев %s — %s", wanted_name, error)
+        return
+
+    short = wanted_name
+    author_name = author.get("username") and f"@{author['username']}" or author.get("first_name") or "игрок"
+    for owner in owners[:MATCH_NOTIFY_LIMIT]:
+        if not owner.get("telegram_id") or owner.get("telegram_id") == author.get("telegram_id"):
+            continue
+        try:
+            await message.bot.send_message(
+                owner["telegram_id"],
+                "🤝 <b>Ваш скин ищут</b>"
+                + NEWLINE * 2
+                + f"{author_name} хочет <b>{short}</b> и отдаёт свои скины."
+                + NEWLINE
+                + "Смотреть объявление: /board, свои предложения: /trades",
+            )
+        except Exception as error:  # noqa: BLE001 — заблокировал бота или не начинал диалог
+            logger.debug("Подбор: не удалось написать %s — %s", owner.get("telegram_id"), error)
+
+
 async def _publish(message: Message, state: FSMContext, repos: Repositories) -> None:
     data = await state.get_data()
     user = await ensure_user(repos, message.from_user)
@@ -212,6 +250,8 @@ async def _publish(message: Message, state: FSMContext, repos: Repositories) -> 
         wanted_name=wanted_name,
     )
     await state.clear()
+
+    await _notify_matching_owners(message, repos, wanted_name, offer_id, user)
 
     await message.answer(
         f"✅ Объявление <b>#{offer_id}</b> на доске!"

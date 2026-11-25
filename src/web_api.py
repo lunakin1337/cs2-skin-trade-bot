@@ -187,7 +187,9 @@ async def _inventory_json(request: web.Request, user: dict, page: int, size: int
     }
 
 
-def _offer_json(offer: dict, items: list[dict], viewer_id: int) -> dict:
+def _offer_json(
+    offer: dict, items: list[dict], viewer_id: int, match_name: str | None = None
+) -> dict:
     return {
         "id": offer["id"],
         "title": offer["title"],
@@ -208,6 +210,7 @@ def _offer_json(offer: dict, items: list[dict], viewer_id: int) -> dict:
             for item in items
         ],
         "value": round(sum(float(item.get("price_steam") or 0) for item in items), 2),
+        "match": match_name,
     }
 
 
@@ -503,14 +506,27 @@ async def api_offers_board(request: web.Request) -> web.Response:
 
     repos = _repos(request)
     query = (request.query.get("q") or "").strip() or None
-    total = await repos.offers.count_active(query=query)
-    offers = await repos.offers.get_active(
-        limit=BOARD_PAGE_SIZE, offset=page * BOARD_PAGE_SIZE, query=query
-    )
+    mine_only = (request.query.get("match") or "") in ("1", "true", "on")
 
+    if mine_only:
+        names = await repos.items.owner_names(user["id"])
+        offers = await repos.offers.active_for_names(
+            names, exclude_user_id=user["id"], limit=BOARD_PAGE_SIZE
+        )
+        total = len(offers)
+    else:
+        total = await repos.offers.count_active(query=query)
+        offers = await repos.offers.get_active(
+            limit=BOARD_PAGE_SIZE, offset=page * BOARD_PAGE_SIZE, query=query
+        )
+
+    # подсказка «мой скин подходит»: показываем на карточках, где хотят то, что у меня есть
+    my_names = set(await repos.items.owner_names(user["id"]))
     cards = []
     for offer in offers:
-        cards.append(_offer_json(offer, await _offer_items(repos, offer), user["id"]))
+        wanted = offer.get("wanted_name")
+        match_name = wanted if wanted and wanted in my_names else None
+        cards.append(_offer_json(offer, await _offer_items(repos, offer), user["id"], match_name))
 
     return web.json_response(
         {
