@@ -650,6 +650,35 @@
   .notice.error { color: var(--danger); border-color: var(--danger); }
   .notice.ok { color: var(--ok); border-color: var(--ok); }
 
+
+  .auth-wall {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--sp-4);
+    background: var(--bg);
+  }
+  .auth-card {
+    max-width: 380px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: var(--sp-5);
+    box-shadow: var(--shadow);
+  }
+  .auth-icon { font-size: 34px; line-height: 1; }
+  .auth-card h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+  .auth-card p { margin: 0; color: var(--text-soft); font-size: var(--fs-sm); line-height: 1.5; }
+  .auth-card .action { text-align: center; }
+  .auth-hint { color: var(--hint); font-size: var(--fs-xs); line-height: 1.45; }
+
   a { color: var(--link); }
 
   /* ---------- мобильный вид ---------- */
@@ -1034,10 +1063,31 @@
   }
 
   function fail(error) {
-    const text = error.message === "unauthorized"
-      ? "Нужна авторизация через Telegram — откройте приложение кнопкой в боте."
-      : error.message;
-    notice(text, "error");
+    if (error && error.message === "unauthorized") {
+      showAuthWall();
+      return;
+    }
+    notice(error.message, "error");
+  }
+
+  // Ссылку из чата легко открыть в браузере — там нет подписи Telegram, и API отвечает 401.
+  // Вместо непонятного сообщения показываем экран с кнопкой перехода в бота.
+  function showAuthWall() {
+    if (document.getElementById("auth-wall")) return;
+    const wall = document.createElement("div");
+    wall.id = "auth-wall";
+    wall.className = "auth-wall";
+    wall.innerHTML =
+      '<div class="auth-card">' +
+      '<div class="auth-icon">📱</div>' +
+      "<h1>Откройте в Telegram</h1>" +
+      "<p>Это Mini App бота <b>@Cs2_p2pbot</b>. В браузере Telegram не передаёт подпись, " +
+      "поэтому данные закрыты. Откройте приложение кнопкой в боте или по ссылке ниже.</p>" +
+      '<a class="action" href="https://t.me/Cs2_p2pbot" target="_blank" rel="noopener">Открыть бота в Telegram</a>' +
+      '<div class="auth-hint">Если вы уже в Telegram — нажмите кнопку «Открыть» в меню бота.</div>' +
+      "</div>";
+    document.body.appendChild(wall);
+    document.body.style.overflow = "hidden";
   }
 
   function state_(container, text) {

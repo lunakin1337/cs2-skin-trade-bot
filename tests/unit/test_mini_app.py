@@ -112,3 +112,11 @@ def test_counterparty_profile_screen_present():
     assert "async function loadUser(" in html
     assert "counterpart_id" in html
     assert 'switchTab("user")' in html
+
+
+def test_auth_wall_for_browser_opening():
+    html = _html()
+
+    assert "function showAuthWall()" in html
+    assert "auth-wall" in html
+    assert "https://t.me/Cs2_p2pbot" in html
