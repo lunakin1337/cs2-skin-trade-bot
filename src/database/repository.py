@@ -659,6 +659,27 @@ class TradeRepository:
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
+    async def stale_pending(self, minutes: int = 15, limit: int = 20) -> List[Dict[str, Any]]:
+        """Сделки, которые ждут подтверждения дольше N минут и по которым ещё не напоминали."""
+        cur = await self.db.execute(
+            """
+            SELECT * FROM trades
+            WHERE status = 'pending'
+              AND reminded_at IS NULL
+              AND created_at <= datetime('now', ?)
+            ORDER BY created_at
+            LIMIT ?
+            """,
+            (f"-{int(minutes)} minutes", limit),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
+    async def mark_reminded(self, trade_id: int) -> None:
+        await self.db.execute(
+            "UPDATE trades SET reminded_at = datetime('now') WHERE id = ?", (trade_id,)
+        )
+        await self.db.commit()
+
     async def set_confirmed(self, trade_id: int, role: str, confirmed: bool = True) -> None:
         """Отметить подтверждение одной из сторон (buyer/seller)."""
         column = "buyer_confirmed_at" if role == "buyer" else "seller_confirmed_at"

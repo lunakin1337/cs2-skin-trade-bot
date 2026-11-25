@@ -22,6 +22,7 @@ from bot.handlers import (
     trade_flow_router,
     trades_router,
 )
+from bot.services.reminders import reminder_loop
 from bot.middlewares.ban import BanMiddleware
 from bot.middlewares.db import DbMiddleware
 from bot.middlewares.logging import LoggingMiddleware
@@ -103,6 +104,9 @@ async def main() -> None:
 
     me = await wait_for_telegram(bot)
     logger.info("Бот запущен: @%s", me.username)
+    asyncio.create_task(
+        reminder_loop(bot, repos, config.trade_reminder_minutes, config.web_app_url)
+    )
     try:
         await dispatcher.start_polling(bot)
     finally:
