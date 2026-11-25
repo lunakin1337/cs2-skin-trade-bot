@@ -1,6 +1,6 @@
 [project]
 name = "cs2-skin-trade-bot"
-version = "0.1.0"
+version = "0.2.0"
 description = "P2P CS2 Skin Trade Bot for Telegram"
 requires-python = ">=3.11"
 dependencies = [
