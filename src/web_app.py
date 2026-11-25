@@ -7,6 +7,8 @@ Mini App отдаётся на `/`, данные — через JSON API (`web_a
 import html
 import logging
 import os
+import time
+import uuid
 from pathlib import Path
 
 from aiogram import Bot
@@ -92,7 +94,22 @@ async def mini_app(request: web.Request) -> web.Response:
 
 
 async def health_check(request: web.Request) -> web.Response:
-    return web.json_response({"status": "ok"})
+    """Живость сервиса: база отвечает, версия схемы и число миграций."""
+    payload: dict[str, object] = {"status": "ok"}
+    try:
+        db = _repos(request).db
+        cur = await db.execute("SELECT COUNT(*) AS cnt FROM migrations")
+        row = await cur.fetchone()
+        payload["migrations"] = row["cnt"] if row else 0
+        cur = await db.execute("SELECT 1 AS ok")
+        await cur.fetchone()
+        payload["db"] = "ok"
+    except Exception as error:  # noqa: BLE001 — health не должен падать, он сообщает
+        logger.warning("Health: база не ответила — %s", error)
+        payload["status"] = "degraded"
+        payload["db"] = "error"
+        return web.json_response(payload, status=503)
+    return web.json_response(payload)
 
 
 async def user_stats(request: web.Request) -> web.Response:
@@ -141,11 +158,70 @@ async def on_cleanup(app: web.Application) -> None:
         await bot.session.close()
 
 
+# ---------- надёжность: ошибки и тайминги ----------
+
+
+def _request_id(request: web.Request) -> str:
+    """Идентификатор запроса: из заголовка или случайный, чтобы связать лог и ответ."""
+    return request.headers.get("X-Request-Id") or uuid.uuid4().hex[:12]
+
+
+@web.middleware
+async def api_error_middleware(request: web.Request, handler):
+    """Любое исключение в API — JSON с кодом и request_id, а не HTML-страница."""
+    request_id = _request_id(request)
+    try:
+        return await handler(request)
+    except web.HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 — ловим всё, что не является штатным HTTP-ответом
+        logger.exception(
+            "API: необработанная ошибка %s %s (request_id=%s)", request.method, request.path, request_id
+        )
+        return web.json_response(
+            {"error": "internal", "request_id": request_id},
+            status=500,
+            headers={"X-Request-Id": request_id},
+        )
+
+
+@web.middleware
+async def api_timing_middleware(request: web.Request, handler):
+    """Логировать метод, путь, статус и время ответа. Тело запроса и initData не пишем."""
+    started = time.perf_counter()
+    request_id = _request_id(request)
+    try:
+        response = await handler(request)
+    except web.HTTPException as error:
+        elapsed = (time.perf_counter() - started) * 1000
+        logger.info(
+            "%s %s -> %s за %.0f мс (request_id=%s)",
+            request.method,
+            request.path,
+            error.status,
+            elapsed,
+            request_id,
+        )
+        raise
+    response.headers.setdefault("X-Request-Id", request_id)
+    elapsed = (time.perf_counter() - started) * 1000
+    logger.info(
+        "%s %s -> %s за %.0f мс (request_id=%s)",
+        request.method,
+        request.path,
+        response.status,
+        elapsed,
+        request_id,
+    )
+    return response
+
+
 def create_app(
     config: BotConfig | None = None,
     db_path: str | None = None,
 ) -> web.Application:
-    app = web.Application()
+    # ограничение размера тела: JSON Mini App небольшой, 1 МБ с запасом
+    app = web.Application(client_max_size=1024 * 1024)
     app[CONFIG_OVERRIDE_KEY] = config
     app[DB_PATH_OVERRIDE_KEY] = db_path
     app[CATALOG_CACHE_KEY] = CatalogCache()
@@ -155,6 +231,8 @@ def create_app(
     app.router.add_get("/health", health_check)
     app.router.add_get("/stats", user_stats)
     register_api_routes(app)
+    app.middlewares.append(api_error_middleware)
+    app.middlewares.append(api_timing_middleware)
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
