@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from bot.handlers.trades import render_trades
 from bot.keyboards.inline import back_to_main_keyboard
 from bot.services.disputes import DisputeError, notify_dispute, open_dispute
+from bot.services import notifications
 from bot.services.trades import settle_after_receipt
 from bot.states.trade import DisputeStates
 from bot.utils.formatters import NEWLINE, format_deadline
@@ -95,6 +96,7 @@ async def cb_accept_offer(callback: CallbackQuery, repos: Repositories) -> None:
     await repos.trades.set_confirmed(trade_id, "buyer")
     await repos.offers.update_status(offer_id, "in_trade")
 
+    await notifications.new_trade(callback.bot, repos, await repos.trades.get_by_id(trade_id))
     text, markup = await render_trades(repos, callback.from_user.id)
     await edit_or_send(
         callback.message,
@@ -127,6 +129,9 @@ async def cb_trade_confirm(callback: CallbackQuery, repos: Repositories) -> None
 
     if trade["buyer_confirmed_at"] and trade["seller_confirmed_at"]:
         await repos.trades.update_status(trade_id, "in_escrow")
+        await notifications.both_confirmed(
+            callback.bot, repos, await repos.trades.get_by_id(trade_id)
+        )
         await _refresh_message(callback, repos)
         await notify(callback, "Обе стороны подтвердили — можно обмениваться")
         return
@@ -157,6 +162,8 @@ async def cb_trade_complete(callback: CallbackQuery, repos: Repositories) -> Non
 
     await repos.trades.set_completed_side(trade_id, role)
     trade = await repos.trades.get_by_id(trade_id)
+    if not (trade.get("buyer_completed_at") and trade.get("seller_completed_at")):
+        await notifications.side_received(callback.bot, repos, trade, user["id"])
     trade = await settle_after_receipt(repos, trade)
 
     if trade["status"] == "holding":

@@ -71,6 +71,11 @@ async def sync_inventory(
     created, updated, removed = await repos.items.sync(user["id"], inventory.rows())
     priced = await refresh_prices(repos, user["id"], inventory)
 
+    # предметы, ушедшие из инвентаря, не должны висеть в активных объявлениях
+    cancelled = await repos.offers.cancel_with_missing_items(user["id"])
+    if cancelled:
+        await bump_catalog_version(repos)
+
     # что видели в инвентаре — попадает в каталог для «хочу»
     await repos.skins.upsert_many(
         [
@@ -97,4 +102,5 @@ async def sync_inventory(
         "updated": updated,
         "removed": removed,
         "priced": priced,
+        "offers_cancelled": cancelled,
     }
