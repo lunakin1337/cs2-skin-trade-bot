@@ -735,6 +735,10 @@
       <div class="stat" id="catalog-stat">Каталог скинов</div>
       <button class="ghost" id="catalog-reset">Сбросить фильтры</button>
     </div>
+    <div class="chips" id="catalog-source">
+      <button data-source="board" class="active">🤝 На обмене</button>
+      <button data-source="all">Весь каталог Steam</button>
+    </div>
     <div class="chips" id="catalog-categories"></div>
     <div class="chips" id="catalog-weapons" hidden></div>
     <div class="toolbar" style="margin-top:10px">
@@ -749,6 +753,7 @@
         <input id="catalog-max" inputmode="decimal" placeholder="∞" autocomplete="off"></label>
       <label class="filter-field"><span>Сортировка</span>
         <select id="catalog-sort">
+          <option value="offers_desc">Больше предложений</option>
           <option value="price_asc">Цена ↑</option>
           <option value="price_desc">Цена ↓</option>
           <option value="name">Название</option>
@@ -907,7 +912,8 @@
     picked: new Set(),
     wanted: null,
     inventoryItems: [],
-    catalog: { category: null, weapon: null, query: "", page: 0, pages: 1, wear: null, min: "", max: "", sort: "price_asc", stattrak: false },
+    catalog: { source: "board", category: null, weapon: null, query: "", page: 0, pages: 1, wear: null, min: "", max: "", sort: "offers_desc", stattrak: false },
+    catalogTrees: {},
     catalogTree: null,
     catalogPages: new Map(),
     counter: { offerId: null, picked: new Set() },
@@ -1181,15 +1187,26 @@
 
   // ---------- каталог ----------
 
+  function treeUrl() {
+    return state.catalog.source === "board" ? "/api/catalog/available/tree" : "/api/catalog/tree";
+  }
+
   async function loadCatalog() {
-    if (!state.catalogTree) {
+    $("catalog-source").querySelectorAll("button").forEach((button) => {
+      button.classList.toggle("active", button.getAttribute("data-source") === state.catalog.source);
+    });
+    const cached = state.catalogTrees[state.catalog.source];
+    if (!cached) {
       $("catalog-categories").innerHTML =
         '<span class="sk sk-pill"></span><span class="sk sk-pill"></span><span class="sk sk-pill"></span>';
-      const tree = await api("/api/catalog/tree");
-      state.catalogTree = tree.categories;
-      state.catalogTreeTotal = tree.total;
-      $("catalog-stat").innerHTML = "<b>" + tree.total + "</b> скинов в каталоге";
+      const tree = await api(treeUrl());
+      state.catalogTrees[state.catalog.source] = { categories: tree.categories, total: tree.total };
     }
+    state.catalogTree = state.catalogTrees[state.catalog.source].categories;
+    state.catalogTreeTotal = state.catalogTrees[state.catalog.source].total;
+    $("catalog-stat").innerHTML = state.catalog.source === "board"
+      ? "<b>" + state.catalogTreeTotal + "</b> скинов на обмене"
+      : "<b>" + state.catalogTreeTotal + "</b> скинов в каталоге";
     renderCatalogChips();
     renderWearChips();
     await loadCatalogItems(0);
@@ -1228,10 +1245,11 @@
   ];
 
   function hasCatalogFilters() {
+    const defaultSort = state.catalog.source === "board" ? "offers_desc" : "price_asc";
     return Boolean(
       state.catalog.category || state.catalog.weapon || state.catalog.query ||
       state.catalog.wear || state.catalog.min || state.catalog.max ||
-      state.catalog.stattrak || (state.catalog.sort && state.catalog.sort !== "price_asc")
+      state.catalog.stattrak || (state.catalog.sort && state.catalog.sort !== defaultSort)
     );
   }
 
@@ -1242,6 +1260,11 @@
     ).join("");
     $("catalog-stattrak").setAttribute("aria-pressed", state.catalog.stattrak ? "true" : "false");
     $("catalog-sort").value = state.catalog.sort;
+    const boardOnly = state.catalog.source === "board";
+    $("catalog-wear").hidden = boardOnly;
+    $("catalog-stattrak").hidden = boardOnly;
+    $("catalog-min").closest(".filter-field").hidden = boardOnly;
+    $("catalog-max").closest(".filter-field").hidden = boardOnly;
   }
 
   function catalogQuery(page) {
@@ -1249,6 +1272,10 @@
     if (state.catalog.category) params.set("category", state.catalog.category);
     if (state.catalog.weapon) params.set("weapon", state.catalog.weapon);
     if (state.catalog.query) params.set("q", state.catalog.query);
+    if (state.catalog.source === "board") {
+      if (state.catalog.sort) params.set("sort", state.catalog.sort);
+      return params.toString();
+    }
     if (state.catalog.wear) params.set("wear", state.catalog.wear);
     if (state.catalog.min) params.set("min", state.catalog.min);
     if (state.catalog.max) params.set("max", state.catalog.max);
@@ -1257,12 +1284,16 @@
     return params.toString();
   }
 
+  function catalogUrl(params) {
+    return (state.catalog.source === "board" ? "/api/catalog/available?" : "/api/catalog/items?") + params;
+  }
+
   async function fetchCatalogPage(page) {
     const params = catalogQuery(page);
     const cached = state.catalogPages.get(params);
     if (cached) return cached;
 
-    const data = await api("/api/catalog/items?" + params);
+    const data = await api(catalogUrl(params));
     state.catalogPages.set(params, data);
     return data;
   }
@@ -1278,17 +1309,34 @@
     const tone = rarityTone(item.rarity);
     const badges = [];
     if (item.rarity) badges.push('<span class="badge rar">' + esc(item.rarity) + "</span>");
+    if (item.offers) {
+      badges.push('<span class="badge">🤝 ' + item.offers + " " + plural(item.offers, "предложение", "предложения", "предложений") + "</span>");
+    }
     const thumb = item.image
       ? '<img src="' + esc(item.image) + '" alt="" loading="lazy">'
       : '<span class="thumb-stub">' + esc(initials(item.name)) + "</span>";
+
+    const actions = state.catalog.source === "board"
+      ? '<button class="ghost tiny" data-board-name="' + esc(item.name) + '">📋 На доске</button>' +
+        '<button class="ghost tiny" data-want="' + esc(item.name) + '">🎯 Хочу</button>'
+      : '<button class="ghost tiny" data-want="' + esc(item.name) + '">🎯 Хочу это</button>';
 
     return '<article class="card r-' + tone + '">' +
       '<div class="thumb">' + thumb + "</div>" +
       '<div class="body"><div class="title">' + esc(item.name) + "</div>" +
       '<div class="price ' + (price ? "" : "unknown") + '">' + (price || "цена неизвестна") + "</div>" +
       (badges.length ? '<div class="badges">' + badges.join("") + "</div>" : "") +
-      '<div class="actions"><button class="ghost tiny" data-want="' + esc(item.name) + '">🎯 Хочу это</button></div>' +
+      '<div class="actions">' + actions + "</div>" +
       "</div></article>";
+  }
+
+  function plural(count, one, few, many) {
+    const tail = count % 100;
+    if (tail >= 11 && tail <= 14) return many;
+    const last = count % 10;
+    if (last === 1) return one;
+    if (last >= 2 && last <= 4) return few;
+    return many;
   }
 
   async function loadCatalogItems(page) {
@@ -1342,10 +1390,24 @@
     loadCatalogItems(0).catch(fail);
   });
 
+  $("catalog-source").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-source]");
+    if (!button) return;
+    const source = button.getAttribute("data-source");
+    if (source === state.catalog.source) return;
+    state.catalog.source = source;
+    state.catalog.category = null;
+    state.catalog.weapon = null;
+    state.catalog.sort = source === "board" ? "offers_desc" : "price_asc";
+    state.catalogPages.clear();
+    loadCatalog().catch(fail);
+  });
+
   function resetCatalogFilters() {
     state.catalog = {
-      category: null, weapon: null, query: "", page: 0, pages: 1,
-      wear: null, min: "", max: "", sort: "price_asc", stattrak: false
+      source: state.catalog.source, category: null, weapon: null, query: "", page: 0, pages: 1,
+      wear: null, min: "", max: "", sort: state.catalog.source === "board" ? "offers_desc" : "price_asc",
+      stattrak: false
     };
     state.catalogPages.clear();
     $("catalog-search").value = "";
@@ -1392,6 +1454,20 @@
   $("catalog-next").addEventListener("click", () => loadCatalogItems(state.catalog.page + 1).catch(fail));
 
   $("catalog-list").addEventListener("click", (event) => {
+    const toBoard = event.target.closest("[data-board-name]");
+    if (toBoard) {
+      const name = toBoard.getAttribute("data-board-name");
+      state.boardScope = "all";
+      state.boardQuery = name;
+      document.querySelectorAll("#board-scope button").forEach((item) => {
+        item.classList.toggle("active", item.getAttribute("data-scope") === "all");
+      });
+      switchTab("board").then(() => {
+        $("board-search").value = name;
+        loadBoard(0).catch(fail);
+      }).catch(fail);
+      return;
+    }
     const button = event.target.closest("[data-want]");
     if (!button) return;
     state.wanted = button.getAttribute("data-want");

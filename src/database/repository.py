@@ -1,10 +1,13 @@
 """Repository pattern для доступа к данным."""
 
-import aiosqlite
 import json
 import re
-from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+import aiosqlite
+
+from bot.utils.skin_categories import CATEGORY_ORDER
 
 
 class Database:
@@ -878,6 +881,15 @@ class SettingsRepository:
         await self.db.commit()
 
 
+AVAILABLE_BASE_SQL = """
+    FROM offers o
+    JOIN json_each(o.items_offered) j
+    JOIN items i ON i.id = j.value
+    LEFT JOIN skins s ON s.market_hash_name = i.market_hash_name
+    WHERE o.status = 'active'
+"""
+
+
 WEAR_NAMES = {
     "fn": "Factory New",
     "mw": "Minimal Wear",
@@ -1095,6 +1107,107 @@ class SkinRepository:
             (*params, limit, offset),
         )
         return [dict(row) for row in await cur.fetchall()]
+
+    def _available_filters(
+        self,
+        category: Optional[str] = None,
+        weapon: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> tuple[str, List[Any]]:
+        conditions: List[str] = []
+        params: List[Any] = []
+        if category:
+            conditions.append("COALESCE(s.category, 'other') = ?")
+            params.append(category)
+        if weapon:
+            conditions.append("s.weapon = ?")
+            params.append(weapon)
+        if query:
+            conditions.append("i.market_hash_name LIKE ?")
+            params.append(f"%{query}%")
+        extra = (" AND " + " AND ".join(conditions)) if conditions else ""
+        return extra, params
+
+    AVAILABLE_GROUPS: dict[str, str] = {
+        "offers_desc": "offers DESC, market_hash_name",
+        "price_asc": "COALESCE(price, 1000000), market_hash_name",
+        "price_desc": "COALESCE(price, -1) DESC, market_hash_name",
+        "name": "market_hash_name",
+    }
+
+    async def available_items(
+        self,
+        category: Optional[str] = None,
+        weapon: Optional[str] = None,
+        query: Optional[str] = None,
+        sort: str = "offers_desc",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Скины, которые сейчас реально можно получить: они в активных объявлениях."""
+        extra, params = self._available_filters(category, weapon, query)
+        order = self.AVAILABLE_GROUPS.get(sort, self.AVAILABLE_GROUPS["offers_desc"])
+        cur = await self.db.execute(
+            f"""
+            SELECT
+                i.market_hash_name AS market_hash_name,
+                COALESCE(s.category, 'other') AS category,
+                s.weapon AS weapon,
+                COALESCE(s.rarity, i.rarity) AS rarity,
+                COALESCE(i.image_url, s.icon_url) AS icon_url,
+                COALESCE(i.price_steam, s.price_value) AS price,
+                COUNT(DISTINCT o.id) AS offers,
+                COUNT(DISTINCT o.creator_id) AS owners
+            {AVAILABLE_BASE_SQL} {extra}
+            GROUP BY i.market_hash_name
+            ORDER BY {order}
+            LIMIT ? OFFSET ?
+            """,
+            (*params, limit, offset),
+        )
+        return [dict(row) for row in await cur.fetchall()]
+
+    async def count_available(
+        self,
+        category: Optional[str] = None,
+        weapon: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> int:
+        extra, params = self._available_filters(category, weapon, query)
+        cur = await self.db.execute(
+            f"SELECT COUNT(DISTINCT i.market_hash_name) AS cnt {AVAILABLE_BASE_SQL} {extra}",
+            tuple(params),
+        )
+        row = await cur.fetchone()
+        return row["cnt"] if row else 0
+
+    async def available_tree(self) -> tuple[int, List[Dict[str, Any]]]:
+        """Сколько скинов на обмене в каждом разделе и по оружию."""
+        cur = await self.db.execute(
+            f"""
+            SELECT
+                COALESCE(s.category, 'other') AS category,
+                s.weapon AS weapon,
+                COUNT(DISTINCT i.market_hash_name) AS cnt
+            {AVAILABLE_BASE_SQL}
+            GROUP BY category, s.weapon
+            """
+        )
+        rows = await cur.fetchall()
+
+        categories: dict[str, dict[str, Any]] = {}
+        total = 0
+        for row in rows:
+            count = row["cnt"] or 0
+            total += count
+            bucket = categories.setdefault(row["category"], {"code": row["category"], "count": 0, "weapons": []})
+            bucket["count"] += count
+            if row["weapon"]:
+                bucket["weapons"].append({"weapon": row["weapon"], "count": count})
+        ordered = [categories[code] for code in CATEGORY_ORDER if code in categories]
+        for bucket in ordered:
+            bucket["weapons"].sort(key=lambda item: -item["count"])
+        return total, ordered
 
     async def count_items(
         self,
