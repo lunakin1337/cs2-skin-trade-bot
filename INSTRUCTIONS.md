@@ -152,6 +152,18 @@ ruff check src tests scripts
   только в интерфейсе.
 - Доступ к Mini App API — по подписи `initData`; без неё 401.
 
+## 11.1 Docker: бот и веб-приложение
+
+`docker-compose.yml` поднимает два сервиса из одного образа: `bot` (поллинг) и `web`
+(Mini App и API на 8080). У `web` есть healthcheck на `/health`, поэтому `docker compose ps`
+показывает unhealthy, если база перестала отвечать.
+
+```
+docker compose up -d --build
+docker compose ps
+curl http://127.0.0.1:8080/health
+```
+
 ## 12. Резервные копии
 
 - Копия базы на момент сборки 0.1: `data/bot-v0.1.db.bak`.
@@ -160,6 +172,13 @@ ruff check src tests scripts
   `python scripts/cleanup_test_trades.py --db data/bot.db` (dry-run, база открывается
   только на чтение), затем `--apply`: скрипт сам делает копию
   `data/bot-cleanup-<дата>.db.bak` через sqlite backup API и удаляет записи одной транзакцией.
-- Бэкап вручную: скопировать `data/bot.db` при остановленном боте (SQLite).
-- Восстановление: положить файл обратно в `data/bot.db`, запустить бота — миграции
+- Бэкап по расписанию: `python scripts/backup_db.py` кладёт онлайн-копию в `backups/`
+  (`bot-<дата>-<время>.db`, sqlite backup API — бота останавливать не нужно) и держит
+  `--keep` последних, по умолчанию 7. `--list` показывает, что уже есть.
+- Ежедневное расписание на Windows (задача в планировщике, 04:00):
+  ```
+  schtasks /Create /SC DAILY /ST 04:00 /TN "CS2 bot backup" /TR "cmd /c cd /d C:\desktop\telegramBOT && python scripts\backup_db.py"
+  ```
+- Бэкап вручную без скрипта: скопировать `data/bot.db` при остановленном боте.
+- Восстановление: положить файл из `backups/` в `data/bot.db`, запустить бота — миграции
   доведут схему до актуальной.
