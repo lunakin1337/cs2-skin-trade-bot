@@ -478,6 +478,16 @@
     margin-right: 5px;
   }
   .badge.lock { color: var(--hint); background: var(--surface-3); }
+  .linklike {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--link);
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
   .badge.match {
     margin-top: var(--sp-2);
     color: var(--ok);
@@ -845,6 +855,14 @@
       <div class="stat" id="counter-picked">Выбрано: 0</div>
       <button class="action" id="counter-send">🤝 Отправить предложение</button>
     </div>
+  </section>
+
+  <section id="view-user" hidden>
+    <div class="toolbar">
+      <div class="title" id="user-title">Профиль участника</div>
+      <button class="ghost" id="user-back">← Назад к сделкам</button>
+    </div>
+    <div id="user-body"></div>
   </section>
 
   <section id="view-mine" hidden>
@@ -1937,7 +1955,11 @@
     return '<div class="row"><div class="head"><b>#' + trade.id + "</b>" +
       '<span class="pill">' + esc(trade.status_label) + "</span></div>" +
       '<div class="sub">Вы ' + (trade.role === "buyer" ? "покупатель" : "продавец") +
-      " · контрагент " + esc(trade.counterpart) + "</div>" +
+      " · контрагент " +
+      (trade.counterpart_id
+        ? '<button class="linklike" data-user="' + trade.counterpart_id + '">' + esc(trade.counterpart) + "</button>"
+        : esc(trade.counterpart)) +
+      "</div>" +
       '<div class="sub">Подтверждение: ' + (trade.confirmed ? "✅" : "⏳") +
       " · получение: " + (trade.received ? "✅" : "⏳") + "</div>" +
       (trade.protection_note ? '<div class="sub">🛡️ ' + esc(trade.protection_note) + "</div>" : "") +
@@ -1954,6 +1976,32 @@
       link +
       (actions.length ? '<div class="actions">' + actions.join("") + "</div>" : "") +
       "</div>";
+  }
+
+  async function loadUser(userId) {
+    const body = $("user-body");
+    body.innerHTML = '<div class="row skeleton-row"><div class="sk sk-line short"></div><div class="sk sk-line"></div></div>';
+    try {
+      const user = await api("/api/users/" + userId);
+      const stars = "★".repeat(Math.round(user.rating || 0)) || "—";
+      const reviews = (user.reviews || []).map((review) =>
+        '<div class="row"><div class="head"><b>' + "★".repeat(review.score) + " " + esc(review.from) + "</b>" +
+        '<span class="stat">' + esc(review.at) + "</span></div>" +
+        (review.comment ? '<div class="sub">' + esc(review.comment) + "</div>" : "") +
+        "</div>"
+      ).join("");
+      $("user-title").textContent = user.name;
+      body.innerHTML =
+        '<div class="row"><div class="kv"><span class="k">Имя</span><span>' + esc(user.name) + "</span></div>" +
+        '<div class="kv"><span class="k">Рейтинг</span><span>' + esc(stars) + " " + user.rating + " (" + user.reviews_total + " отзывов)</span></div>" +
+        '<div class="kv"><span class="k">Сделок</span><span>' + user.trades_count + "</span></div>" +
+        (user.steam_persona ? '<div class="kv"><span class="k">Steam</span><span>' + esc(user.steam_persona) + "</span></div>" : "") +
+        (user.member_since ? '<div class="kv"><span class="k">С нами с</span><span>' + esc(user.member_since) + "</span></div>" : "") +
+        "</div>" +
+        (reviews || '<div class="empty"><span class="empty-icon">⭐</span><span>Отзывов пока нет</span></div>');
+    } catch (error) {
+      empty_(body, "👤", "Профиль недоступен: " + (error.message || "ошибка"));
+    }
   }
 
   async function loadTrades() {
@@ -1980,7 +2028,14 @@
     list.innerHTML = blocks.join("");
   }
 
+  $("user-back").addEventListener("click", () => switchTab("trades"));
+
   $("trades-list").addEventListener("click", async (event) => {
+    const userLink = event.target.closest("[data-user]");
+    if (userLink) {
+      switchTab("user").then(() => loadUser(userLink.getAttribute("data-user"))).catch(fail);
+      return;
+    }
     const button = event.target.closest("[data-trade]");
     const star = event.target.closest("[data-score]");
     const dispute = event.target.closest("[data-dispute]");
@@ -2169,6 +2224,7 @@
 
   function backTarget() {
     if (state.tab === "counter") return "board";
+    if (state.tab === "user") return "trades";
     const previous = state.tabHistory.pop();
     return previous || null;
   }

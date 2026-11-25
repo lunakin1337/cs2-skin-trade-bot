@@ -786,6 +786,7 @@ def _trade_json(trade: dict, user_id: int) -> dict:
         "status": trade["status"],
         "status_label": TRADE_STATUS_LABELS.get(trade["status"], trade["status"]),
         "counterpart": counterpart,
+        "counterpart_id": trade.get("seller_id") if is_buyer else trade.get("buyer_id"),
         "counterpart_url": counterpart_url,
         "confirmed": bool(trade.get(f"{role}_confirmed_at")),
         "received": bool(trade.get(f"{role}_completed_at")),
@@ -826,6 +827,48 @@ async def _notify_trade(
             await notifications.finalized(bot, _repos(request), trade, web_app_url)
     except Exception as error:  # noqa: BLE001 — уведомление не должно ломать API
         logger.warning("Уведомление по сделке %s (%s) не ушло: %s", trade_id, event, error)
+
+
+
+async def api_user_profile(request: web.Request) -> web.Response:
+    """Публичный профиль участника: рейтинг, сделки, отзывы, Steam-профиль."""
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    try:
+        user_id = int(request.match_info["user_id"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad user id"}, status=400)
+
+    repos = _repos(request)
+    target = await repos.users.get_by_id(user_id)
+    if not target:
+        return web.json_response({"error": "Пользователь не найден"}, status=404)
+
+    reviews = await repos.ratings.get_for_user(user_id)
+    average = await repos.ratings.get_average_rating(user_id)
+    return web.json_response(
+        {
+            "id": target["id"],
+            "name": format_author(target),
+            "rating": round(average, 1),
+            "trades_count": target.get("trades_count") or 0,
+            "steam_persona": target.get("steam_persona"),
+            "steam_profile_url": target.get("steam_profile_url"),
+            "member_since": (target.get("created_at") or "")[:10],
+            "reviews": [
+                {
+                    "score": review["score"],
+                    "comment": review.get("comment"),
+                    "from": review.get("from_username") or "участник",
+                    "at": (review.get("created_at") or "")[:10],
+                }
+                for review in reviews[:10]
+            ],
+            "reviews_total": len(reviews),
+        }
+    )
 
 
 async def api_trades(request: web.Request) -> web.Response:
@@ -1157,6 +1200,7 @@ def register_api_routes(app: web.Application) -> None:
     app.router.add_post("/api/offers/{offer_id}/cancel", api_offer_cancel)
     app.router.add_post("/api/offers/{offer_id}/delete", api_offer_delete)
     app.router.add_get("/api/trades", api_trades)
+    app.router.add_get("/api/users/{user_id}", api_user_profile)
     # конкретный путь спора регистрируется раньше общего {action}
     app.router.add_post("/api/trades/{trade_id}/dispute", api_trade_dispute)
     app.router.add_post("/api/trades/{trade_id}/{action}", api_trade_action)
