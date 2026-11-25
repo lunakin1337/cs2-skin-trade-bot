@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 from aiogram import Bot
 from aiohttp import web
 
+from bot.services import notifications
 from bot.services.disputes import (
     DISPUTE_STATUSES as DISPUTE_TRADE_STATUSES,
     DisputeError,
@@ -734,6 +735,7 @@ async def _offer_action(request: web.Request, action: str) -> web.Response:
         # инициатор подтверждает сделку в момент отправки предложения
         await repos.trades.set_confirmed(trade_id, "buyer")
         await repos.offers.update_status(offer_id, "in_trade")
+        await _notify_trade(request, "new", trade_id)
         return web.json_response({"ok": True, "trade_id": trade_id, "status": "pending"})
 
     if offer["creator_id"] != user["id"]:
@@ -799,6 +801,33 @@ def _trade_json(trade: dict, user_id: int) -> dict:
     }
 
 
+
+async def _notify_trade(
+    request: web.Request, event: str, trade_id: int, actor_id: int | None = None
+) -> None:
+    """Отправить уведомление по сделке через бота, если он есть в приложении."""
+    bot = request.app.get(BOT_KEY)
+    if bot is None:
+        return
+    trade = await _repos(request).trades.get_by_id(trade_id)
+    if not trade:
+        return
+    web_app_url = _config(request).web_app_url
+    try:
+        if event == "new":
+            await notifications.new_trade(bot, _repos(request), trade, web_app_url)
+        elif event == "confirmed":
+            await notifications.both_confirmed(bot, _repos(request), trade, web_app_url)
+        elif event == "cancelled":
+            await notifications.cancelled(bot, _repos(request), trade, actor_id, web_app_url)
+        elif event == "received":
+            await notifications.side_received(bot, _repos(request), trade, actor_id, web_app_url)
+        elif event == "finalized":
+            await notifications.finalized(bot, _repos(request), trade, web_app_url)
+    except Exception as error:  # noqa: BLE001 — уведомление не должно ломать API
+        logger.warning("Уведомление по сделке %s (%s) не ушло: %s", trade_id, event, error)
+
+
 async def api_trades(request: web.Request) -> web.Response:
     user = await _api_user(request)
     if user is None:
@@ -809,7 +838,11 @@ async def api_trades(request: web.Request) -> web.Response:
 
     items = []
     for trade in trades:
+        was_holding = trade["status"] == "holding"
         trade = await finalize_due(repos, trade)
+        if was_holding and trade["status"] == "completed":
+            # срок Trade Protection истёк именно сейчас — можно ставить оценку
+            await _notify_trade(request, "finalized", trade["id"])
         details = await trade_payload(repos, trade, user["id"])
         payload = _trade_json({**trade, **details}, user["id"])
         payload.update(details)
@@ -847,6 +880,7 @@ async def api_trade_action(request: web.Request) -> web.Response:
         trade = await repos.trades.get_by_id(trade_id)
         if trade["buyer_confirmed_at"] and trade["seller_confirmed_at"]:
             await repos.trades.update_status(trade_id, "in_escrow")
+            await _notify_trade(request, "confirmed", trade_id)
             return web.json_response({"ok": True, "status": "in_escrow"})
         return web.json_response({"ok": True, "status": trade["status"]})
 
@@ -858,6 +892,8 @@ async def api_trade_action(request: web.Request) -> web.Response:
 
         await repos.trades.set_completed_side(trade_id, role)
         trade = await repos.trades.get_by_id(trade_id)
+        if not (trade.get("buyer_completed_at") and trade.get("seller_completed_at")):
+            await _notify_trade(request, "received", trade_id, user["id"])
         trade = await settle_after_receipt(repos, trade)
         if trade["status"] == "holding":
             return web.json_response(
@@ -878,12 +914,14 @@ async def api_trade_action(request: web.Request) -> web.Response:
         await repos.trades.update_status(trade_id, "cancelled")
         if trade.get("offer_id"):
             await repos.offers.update_status(trade["offer_id"], "active")
+        await _notify_trade(request, "cancelled", trade_id, user["id"])
         return web.json_response({"ok": True, "status": "cancelled"})
 
     if action == "cancel":
         if trade["status"] not in {"pending", "confirmed", "in_escrow"}:
             return web.json_response({"error": "Сделку уже нельзя отменить"}, status=400)
         await repos.trades.update_status(trade_id, "cancelled")
+        await _notify_trade(request, "cancelled", trade_id, user["id"])
         if trade.get("offer_id"):
             await repos.offers.update_status(trade["offer_id"], "active")
         return web.json_response({"ok": True, "status": "cancelled"})

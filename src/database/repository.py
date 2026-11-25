@@ -574,6 +574,23 @@ class OfferRepository:
         )
         return [dict(row) for row in await cur.fetchall()]
 
+    async def cancel_with_missing_items(self, owner_id: int) -> int:
+        """Снять активные объявления, чьи предметы больше не лежат в инвентаре владельца."""
+        cur = await self.db.execute(
+            """
+            UPDATE offers SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+            WHERE creator_id = ? AND status = 'active' AND EXISTS (
+                SELECT 1 FROM json_each(offers.items_offered) je
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM items i WHERE i.id = je.value AND i.owner_id = offers.creator_id
+                )
+            )
+            """,
+            (owner_id,),
+        )
+        await self.db.commit()
+        return cur.rowcount or 0
+
     async def get_by_creator(self, creator_id: int) -> List[Dict[str, Any]]:
         cur = await self.db.execute(
             "SELECT * FROM offers WHERE creator_id = ? ORDER BY created_at DESC",

@@ -1,0 +1,59 @@
+name: Bot Live
+
+# Резервный хостинг поллинга на раннерах GitHub. Запускается только вручную:
+# одновременно может работать лишь один поллер с токеном бота, поэтому
+# расписание отключено — иначе бот на компьютере получает Conflict.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: bot-live
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Restore database
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: bot-db-${{ github.run_id }}
+          restore-keys: |
+            bot-db-
+
+      - name: Проверка токена
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            response=$(curl -s --max-time 20 "https://api.telegram.org/bot${BOT_TOKEN}")
+            if echo "$response" | grep -q '"ok":true'; then
+              echo "$response" | python -c "import json,sys; d=json.load(sys.stdin); print('bot:', d['result']['username'])"
+              exit 0
+            fi
+            echo "попытка ${attempt}: $(echo "$response" | head -c 160)"
+            sleep 15
+          done
+          echo "getMe не ответил после 5 попыток — токен невалиден или сеть недоступна"
+          exit 1
+
+      - name: Run bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          WEB_APP_URL: ${{ secrets.WEB_APP_URL }}
+          DB_PATH: data/bot.db
+        run: python -m src.bot.main

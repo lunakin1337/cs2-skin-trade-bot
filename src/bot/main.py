@@ -22,6 +22,7 @@ from bot.handlers import (
     trade_flow_router,
     trades_router,
 )
+from bot.middlewares.ban import BanMiddleware
 from bot.middlewares.db import DbMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.throttling import ThrottlingMiddleware
@@ -93,6 +94,7 @@ async def main() -> None:
     )
     dispatcher = create_dispatcher(config)
 
+    dispatcher.update.outer_middleware(BanMiddleware(repos))
     dispatcher.update.middleware(LoggingMiddleware())
     dispatcher.message.middleware(ThrottlingMiddleware(min_interval=0.5))
     dispatcher.callback_query.middleware(ThrottlingMiddleware(min_interval=0.2))
