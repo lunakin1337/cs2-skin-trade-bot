@@ -564,7 +564,7 @@ class TestCatalogCache:
 
         data = await (await client.get("/api/catalog/items?q=Asiimov", headers=auth_headers())).json()
 
-        assert data["items"][0]["rarity"] == "Засекреченное"
+        assert data["items"][0]["rarity"] == "classified"  # канонический слаг, не русский тег
 
 
 class TestCounterOffers:

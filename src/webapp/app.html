@@ -1314,17 +1314,22 @@
 
   // ---------- доска ----------
 
-  function offeredRow(item) {
+  function offeredRow(item, withPrice) {
     const tone = rarityTone(item.rarity);
-    const price = priceLabel(item.price);
+    const price = withPrice ? priceLabel(item.price) : "";
     return '<div class="sub r-' + tone + '"><span class="badge rar">' + esc(item.rarity || "скин") + "</span> " +
       esc(item.short || item.name) + (price ? " · " + price : "") + "</div>";
   }
 
   function offerCard(offer, options) {
     const opts = options || {};
-    const items = offer.offered.map(offeredRow).join("");
-    const wanted = esc(offer.wanted || "—");
+    // цену показываем у предмета, только когда их несколько, иначе она дублирует итог
+    const items = offer.offered
+      .map((item) => offeredRow(item, offer.offered.length > 1))
+      .join("");
+    const wantedRaw = String(offer.wanted || "").trim();
+    const wanted = esc(wantedRaw || "—");
+    const comment = String(offer.comment || "").trim();
 
     const actions = [];
     if (opts.acceptable && !offer.own) {
@@ -1336,15 +1341,23 @@
       actions.push('<button class="ghost danger" data-delete="' + offer.id + '">🗑 Удалить</button>');
     }
 
-    return '<div class="row"><div class="head"><b>#' + offer.id + " · " + esc(offer.title) + "</b>" +
+    const status = offer.status === "active" ? "на доске"
+      : offer.status === "in_trade" ? "в сделке"
+      : offer.status === "completed" ? "завершено"
+      : offer.status === "cancelled" ? "снято"
+      : offer.status;
+
+    return '<div class="row"><div class="head"><b>#' + offer.id + " · " + esc(offer.author) + "</b>" +
       '<span class="pill rating">⭐ ' + (offer.rating || 0).toFixed(1) + "</span></div>" +
       '<div class="split">' +
-        '<div class="cell"><div class="label">Отдаёт</div>' + (items || '<div class="sub muted">—</div>') +
-          (offer.value ? '<div class="sub">' + money(offer.value) + "</div>" : "") + "</div>" +
+        '<div class="cell"><div class="label">Отдаёт' +
+          (offer.value ? " · " + money(offer.value) : "") + "</div>" +
+          (items || '<div class="sub muted">—</div>') + "</div>" +
         '<div class="cell"><div class="label">Хочет</div><div class="sub">' + wanted + "</div>" +
-          (offer.comment ? '<div class="sub muted">' + esc(offer.comment) + "</div>" : "") + "</div>" +
+          (comment && comment !== wanted ? '<div class="sub muted">' + esc(comment) + "</div>" : "") +
+          "</div>" +
       "</div>" +
-      '<div class="sub muted">' + esc(offer.author) + " · " + esc(offer.status) + "</div>" +
+      '<div class="sub muted">' + esc(status) + "</div>" +
       (actions.length ? '<div class="actions">' + actions.join("") + "</div>" : "") +
       "</div>";
   }

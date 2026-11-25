@@ -103,3 +103,91 @@ def classify(market_hash_name: str) -> tuple[str, str | None]:
 def category_title(code: str) -> str:
     title, emoji = CATEGORY_TITLES.get(code, ("Прочее", "❔"))
     return f"{emoji} {title}"
+
+
+# Редкость: слаг -> цвет из Steam Market (`asset_description.name_color`).
+RARITY_BY_COLOR = {
+    "b0c3d9": "consumer",
+    "5e98d9": "industrial",
+    "4b69ff": "milspec",
+    "8847ff": "restricted",
+    "d32ce6": "classified",
+    "eb4b4b": "covert",
+    "f0b90b": "rare",
+    "e4ae39": "contraband",
+    "d2d2d2": "consumer",
+    "3e4a54": "consumer",
+}
+
+# Редкость по тексту типа предмета («Covert Rifle», «Classified Pistol», «★ Knife»).
+RARITY_BY_TYPE = (
+    ("contraband", "contraband"),
+    ("covert", "covert"),
+    ("classified", "classified"),
+    ("restricted", "restricted"),
+    ("mil-spec", "milspec"),
+    ("milspec", "milspec"),
+    ("industrial", "industrial"),
+    ("consumer", "consumer"),
+)
+
+
+def rarity_from_market(name_color: str | None, type_text: str | None = None, name: str = "") -> str | None:
+    """Редкость скина из ответа Steam Market: по цвету, затем по типу, затем по ★."""
+    # Текст типа и «★» точнее цвета: у ножей цвет тот же, что у covert, а редкость rare.
+    lowered = (type_text or "").strip().lower()
+    for needle, rarity in RARITY_BY_TYPE:
+        if needle in lowered:
+            return rarity
+
+    if (name or "").strip().startswith("★"):
+        return "rare"
+
+    color = (name_color or "").strip().lstrip("#").lower()
+    return RARITY_BY_COLOR.get(color)
+
+
+# Основы слов: редкость приходит из тегов Steam и по-русски, и по-английски,
+# причём в разных формах («Засекреченное», «засекреченного типа», «Classified»).
+_RARITY_STEMS: tuple[tuple[str, str], ...] = (
+    ("контрабанд", "contraband"),
+    ("contraband", "contraband"),
+    ("тайное", "covert"),
+    ("covert", "covert"),
+    ("засекреч", "classified"),
+    ("classified", "classified"),
+    ("экзотич", "classified"),
+    ("exotic", "classified"),
+    ("запрещ", "restricted"),
+    ("restricted", "restricted"),
+    ("примечательн", "restricted"),
+    ("remarkable", "restricted"),
+    ("армейск", "milspec"),
+    ("mil-spec", "milspec"),
+    ("milspec", "milspec"),
+    ("превосходн", "milspec"),
+    ("superior", "milspec"),
+    ("промышлен", "industrial"),
+    ("industrial", "industrial"),
+    ("высшего класса", "industrial"),
+    ("high grade", "industrial"),
+    ("ширпотреб", "consumer"),
+    ("базового класса", "consumer"),
+    ("стандартн", "consumer"),
+    ("consumer", "consumer"),
+    ("base grade", "consumer"),
+    ("экстраординар", "rare"),
+    ("extraordinary", "rare"),
+    ("rare", "rare"),
+)
+
+
+def rarity_slug(rarity: str | None, name: str = "") -> str | None:
+    """Привести редкость из тегов Steam (рус/англ) к слагу каталога."""
+    value = (rarity or "").strip().lower()
+    if not value:
+        return "rare" if (name or "").strip().startswith("★") else None
+    for stem, slug in _RARITY_STEMS:
+        if stem in value:
+            return slug
+    return None

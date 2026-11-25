@@ -223,3 +223,19 @@ delete`, `/api/trades`, `/api/trades/{id}/{confirm|complete|rollback|cancel|rate
 6. ~~Убрать мусорные тестовые сделки~~ — готов `scripts/cleanup_test_trades.py`
    (dry-run по умолчанию, `--apply` с бэкапом базы); на проде не запускался.
 7. ~~Споры из UI~~ — кнопка в боте и Mini App, `POST /api/trades/{id}/dispute`.
+
+## Редкость каталога
+
+`skins.rarity` (миграция 009) хранит канонический слаг редкости (consumer … covert,
+rare, contraband). Откуда берётся: цвет и тип из Steam Market при импорте
+(`asset_description.name_color` / `type`), теги инвентаря при синхронизации
+(`rarity_slug` понимает русские и английские формы), а исторические записи
+заполняются скриптом `scripts/import_rarities.py` из открытого датасета CSGO-API:
+
+```
+python scripts/import_rarities.py --db data/bot.db            # отчёт, dry-run
+python scripts/import_rarities.py --db data/bot.db --apply    # записать
+```
+
+API Mini App отдаёт редкость уже слагом (`rarity_slug`), поэтому цвета в каталоге
+одинаковые на всех экранах.
