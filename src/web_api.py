@@ -30,7 +30,7 @@ from bot.utils.telegram_auth import parse_init_data
 from bot.utils.validators import validate_steam_id64, validate_trade_url
 from catalog_cache import catalog_version, etag_matches
 from config.settings import BotConfig
-from database.repository import Repositories
+from database.repository import WEAR_NAMES, Repositories
 from webapp_context import BOT_KEY, CATALOG_CACHE_KEY, CONFIG_KEY, REPOS_KEY
 
 logger = logging.getLogger(__name__)
@@ -405,11 +405,15 @@ async def _catalog_items_payload(
     query: str | None,
     page: int,
     size: int,
+    filters: dict | None = None,
 ) -> dict:
     repos = _repos(request)
-    total = await repos.skins.count_items(category=category, weapon=weapon, query=query)
+    filters = filters or {}
+    # сортировка влияет только на порядок, счётчику она не нужна
+    count_filters = {key: value for key, value in filters.items() if key != "sort"}
+    total = await repos.skins.count_items(category=category, weapon=weapon, query=query, **count_filters)
     items = await repos.skins.list_items(
-        category=category, weapon=weapon, query=query, limit=size, offset=page * size
+        category=category, weapon=weapon, query=query, limit=size, offset=page * size, **filters
     )
     rarities = await repos.items.rarity_map([item["market_hash_name"] for item in items])
 
@@ -433,6 +437,33 @@ async def _catalog_items_payload(
     }
 
 
+CATALOG_SORTS = ("price_asc", "price_desc", "name", "new")
+
+
+def _catalog_price(request: web.Request, name: str) -> float | None:
+    raw = (request.query.get(name) or "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return max(0.0, min(value, 100000.0))
+
+
+def _catalog_filters(request: web.Request) -> dict:
+    """Фильтры каталога из query: сортировка, износ, цена, StatTrak."""
+    sort = (request.query.get("sort") or "price_asc").strip()
+    wear = (request.query.get("wear") or "").strip().lower()
+    return {
+        "sort": sort if sort in CATALOG_SORTS else "price_asc",
+        "wear": wear if wear in WEAR_NAMES else None,
+        "min_price": _catalog_price(request, "min"),
+        "max_price": _catalog_price(request, "max"),
+        "stattrak": (request.query.get("st") or "") in ("1", "true", "on"),
+    }
+
+
 async def api_catalog_items(request: web.Request) -> web.Response:
     user = await _api_user(request)
     if user is None:
@@ -451,11 +482,12 @@ async def api_catalog_items(request: web.Request) -> web.Response:
     except ValueError:
         size = 20
 
-    key = f"catalog:items:{category}:{weapon}:{query}:{page}:{size}"
+    filters = _catalog_filters(request)
+    key = f"catalog:items:{category}:{weapon}:{query}:{page}:{size}:{sorted(filters.items())}"
     return await _cached_json(
         request,
         key,
-        lambda: _catalog_items_payload(request, category, weapon, query, page, size),
+        lambda: _catalog_items_payload(request, category, weapon, query, page, size, filters),
     )
 
 
@@ -470,8 +502,11 @@ async def api_offers_board(request: web.Request) -> web.Response:
         page = 0
 
     repos = _repos(request)
-    total = await repos.offers.count_active()
-    offers = await repos.offers.get_active(limit=BOARD_PAGE_SIZE, offset=page * BOARD_PAGE_SIZE)
+    query = (request.query.get("q") or "").strip() or None
+    total = await repos.offers.count_active(query=query)
+    offers = await repos.offers.get_active(
+        limit=BOARD_PAGE_SIZE, offset=page * BOARD_PAGE_SIZE, query=query
+    )
 
     cards = []
     for offer in offers:

@@ -460,17 +460,37 @@ class OfferRepository:
         await self.db.commit()
         return cur.lastrowid
 
-    async def get_active(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    def _board_filters(self, query: Optional[str]) -> tuple[str, List[Any]]:
+        """Поиск по доске: желаемый скин, свободный текст желания, название и описание."""
+        tokens = [token for token in re.split(r"\s+", (query or "").strip()) if token][:5]
+        if not tokens:
+            return "o.status = 'active'", []
+
+        conditions = ["o.status = 'active'"]
+        params: List[Any] = []
+        for token in tokens:
+            conditions.append(
+                "("
+                "o.title LIKE ? OR o.wanted_name LIKE ? OR o.items_wanted LIKE ? OR o.description LIKE ?"
+                ")"
+            )
+            params.extend([f"%{token}%"] * 4)
+        return " AND ".join(conditions), params
+
+    async def get_active(
+        self, limit: int = 50, offset: int = 0, query: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        where, params = self._board_filters(query)
         cur = await self.db.execute(
-            """
+            f"""
             SELECT o.*, u.username, u.first_name, u.telegram_id, u.rating
             FROM offers o
             JOIN users u ON o.creator_id = u.id
-            WHERE o.status = 'active'
+            WHERE {where}
             ORDER BY o.created_at DESC
             LIMIT ? OFFSET ?
             """,
-            (limit, offset),
+            (*params, limit, offset),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
@@ -488,8 +508,9 @@ class OfferRepository:
         row = await cur.fetchone()
         return dict(row) if row else None
 
-    async def count_active(self) -> int:
-        cur = await self.db.execute("SELECT COUNT(*) AS cnt FROM offers WHERE status = 'active'")
+    async def count_active(self, query: Optional[str] = None) -> int:
+        where, params = self._board_filters(query)
+        cur = await self.db.execute(f"SELECT COUNT(*) AS cnt FROM offers o WHERE {where}", tuple(params))
         row = await cur.fetchone()
         return row["cnt"] if row else 0
 
@@ -800,6 +821,15 @@ class SettingsRepository:
         await self.db.commit()
 
 
+WEAR_NAMES = {
+    "fn": "Factory New",
+    "mw": "Minimal Wear",
+    "ft": "Field-Tested",
+    "ww": "Well-Worn",
+    "bs": "Battle-Scarred",
+}
+
+
 class SkinRepository:
     """Текстовая база всех скинов CS2 (каталог для «хочу»)."""
 
@@ -939,11 +969,22 @@ class SkinRepository:
             category["weapons"] = weapons.get(category["category"], [])
         return categories
 
+    SORTS = {
+        "price_asc": "COALESCE(price_value, 1000000), market_hash_name",
+        "price_desc": "COALESCE(price_value, -1) DESC, market_hash_name",
+        "name": "market_hash_name",
+        "new": "COALESCE(updated_at, '') DESC, market_hash_name",
+    }
+
     def _filters(
         self,
         category: Optional[str],
         weapon: Optional[str],
         query: Optional[str],
+        wear: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        stattrak: bool = False,
     ) -> tuple[str, List[Any]]:
         conditions: List[str] = []
         params: List[Any] = []
@@ -957,6 +998,17 @@ class SkinRepository:
         if query:
             conditions.append("market_hash_name LIKE ?")
             params.append(f"%{query}%")
+        if wear:
+            conditions.append("market_hash_name LIKE ?")
+            params.append(f"%({WEAR_NAMES.get(wear, wear)})%")
+        if stattrak:
+            conditions.append("market_hash_name LIKE 'StatTrak%'")
+        if min_price is not None:
+            conditions.append("COALESCE(price_value, 0) >= ?")
+            params.append(min_price)
+        if max_price is not None:
+            conditions.append("(price_value IS NULL OR price_value <= ?)")
+            params.append(max_price)
 
         where = " AND ".join(conditions) if conditions else "1 = 1"
         return where, params
@@ -968,13 +1020,19 @@ class SkinRepository:
         query: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
+        sort: str = "price_asc",
+        wear: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        stattrak: bool = False,
     ) -> List[Dict[str, Any]]:
-        where, params = self._filters(category, weapon, query)
+        where, params = self._filters(category, weapon, query, wear, min_price, max_price, stattrak)
+        order = self.SORTS.get(sort, self.SORTS["price_asc"])
         cur = await self.db.execute(
             f"""
             SELECT * FROM skins
             WHERE {where}
-            ORDER BY COALESCE(price_value, 1000000), market_hash_name
+            ORDER BY {order}
             LIMIT ? OFFSET ?
             """,
             (*params, limit, offset),
@@ -986,8 +1044,12 @@ class SkinRepository:
         category: Optional[str] = None,
         weapon: Optional[str] = None,
         query: Optional[str] = None,
+        wear: Optional[str] = None,
+        min_price: Optional[float] = None,
+        max_price: Optional[float] = None,
+        stattrak: bool = False,
     ) -> int:
-        where, params = self._filters(category, weapon, query)
+        where, params = self._filters(category, weapon, query, wear, min_price, max_price, stattrak)
         cur = await self.db.execute(f"SELECT COUNT(*) AS cnt FROM skins WHERE {where}", tuple(params))
         row = await cur.fetchone()
         return row["cnt"] if row else 0

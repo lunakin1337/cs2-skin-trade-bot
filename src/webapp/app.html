@@ -289,6 +289,35 @@
     color: var(--accent);
   }
 
+  .filters { align-items: flex-end; gap: var(--sp-2); }
+  .filter-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 84px; min-width: 0; }
+  .filter-field > span {
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    color: var(--hint);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .filter-field input,
+  .filter-field select {
+    width: 100%;
+    height: 40px;
+    padding: 0 10px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: var(--fs-sm);
+  }
+  .filter-field input:focus,
+  .filter-field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .ghost[aria-pressed="true"] {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
   .stat { color: var(--hint); font-size: var(--fs-sm); }
   .stat b { color: var(--text); font-weight: 700; }
 
@@ -705,6 +734,21 @@
       <input id="catalog-search" class="search" placeholder="Поиск по названию" autocomplete="off">
       <button class="ghost" id="catalog-find">🔍 Найти</button>
     </div>
+    <div class="chips" id="catalog-wear"></div>
+    <div class="toolbar filters">
+      <label class="filter-field"><span>Цена от</span>
+        <input id="catalog-min" inputmode="decimal" placeholder="0" autocomplete="off"></label>
+      <label class="filter-field"><span>до</span>
+        <input id="catalog-max" inputmode="decimal" placeholder="∞" autocomplete="off"></label>
+      <label class="filter-field"><span>Сортировка</span>
+        <select id="catalog-sort">
+          <option value="price_asc">Цена ↑</option>
+          <option value="price_desc">Цена ↓</option>
+          <option value="name">Название</option>
+          <option value="new">Новые</option>
+        </select></label>
+      <button class="ghost" id="catalog-stattrak" aria-pressed="false">StatTrak™</button>
+    </div>
     <div id="catalog-list"></div>
     <div class="pager" id="catalog-pager" hidden>
       <button id="catalog-prev">◀️</button>
@@ -715,6 +759,10 @@
 
   <section id="view-board" hidden>
     <div class="toolbar"><div class="stat" id="board-stat"></div></div>
+    <div class="toolbar">
+      <input id="board-search" class="search" placeholder="Что хотите найти: скин, оружие" autocomplete="off">
+      <button class="ghost" id="board-find">🔍 Искать</button>
+    </div>
     <div id="board-list"></div>
     <div class="pager" id="board-pager" hidden>
       <button id="board-prev">◀️</button>
@@ -842,11 +890,12 @@
     invPage: 0,
     invPages: 1,
     boardPage: 0,
+    boardQuery: "",
     boardPages: 1,
     picked: new Set(),
     wanted: null,
     inventoryItems: [],
-    catalog: { category: null, weapon: null, query: "", page: 0, pages: 1 },
+    catalog: { category: null, weapon: null, query: "", page: 0, pages: 1, wear: null, min: "", max: "", sort: "price_asc", stattrak: false },
     catalogTree: null,
     catalogPages: new Map(),
     counter: { offerId: null, picked: new Set() },
@@ -1119,9 +1168,11 @@
         '<span class="sk sk-pill"></span><span class="sk sk-pill"></span><span class="sk sk-pill"></span>';
       const tree = await api("/api/catalog/tree");
       state.catalogTree = tree.categories;
+      state.catalogTreeTotal = tree.total;
       $("catalog-stat").innerHTML = "<b>" + tree.total + "</b> скинов в каталоге";
     }
     renderCatalogChips();
+    renderWearChips();
     await loadCatalogItems(0);
   }
 
@@ -1148,11 +1199,42 @@
       ).join("");
   }
 
+  const WEAR_CHIPS = [
+    ["", "Любой износ"],
+    ["fn", "FN"],
+    ["mw", "MW"],
+    ["ft", "FT"],
+    ["ww", "WW"],
+    ["bs", "BS"]
+  ];
+
+  function hasCatalogFilters() {
+    return Boolean(
+      state.catalog.category || state.catalog.weapon || state.catalog.query ||
+      state.catalog.wear || state.catalog.min || state.catalog.max ||
+      state.catalog.stattrak || (state.catalog.sort && state.catalog.sort !== "price_asc")
+    );
+  }
+
+  function renderWearChips() {
+    $("catalog-wear").innerHTML = WEAR_CHIPS.map((chip) =>
+      '<button data-wear="' + chip[0] + '" class="' +
+      ((state.catalog.wear || "") === chip[0] ? "active" : "") + '">' + esc(chip[1]) + "</button>"
+    ).join("");
+    $("catalog-stattrak").setAttribute("aria-pressed", state.catalog.stattrak ? "true" : "false");
+    $("catalog-sort").value = state.catalog.sort;
+  }
+
   function catalogQuery(page) {
     const params = new URLSearchParams({ page: String(page), size: String(CATALOG_PAGE_SIZE) });
     if (state.catalog.category) params.set("category", state.catalog.category);
     if (state.catalog.weapon) params.set("weapon", state.catalog.weapon);
     if (state.catalog.query) params.set("q", state.catalog.query);
+    if (state.catalog.wear) params.set("wear", state.catalog.wear);
+    if (state.catalog.min) params.set("min", state.catalog.min);
+    if (state.catalog.max) params.set("max", state.catalog.max);
+    if (state.catalog.sort && state.catalog.sort !== "price_asc") params.set("sort", state.catalog.sort);
+    if (state.catalog.stattrak) params.set("st", "1");
     return params.toString();
   }
 
@@ -1200,6 +1282,10 @@
 
     state.catalog.page = data.page;
     state.catalog.pages = data.pages;
+    state.catalog.total = data.total;
+    $("catalog-stat").innerHTML = hasCatalogFilters()
+      ? "Найдено <b>" + data.total + "</b> из " + (state.catalogTreeTotal || data.total)
+      : "<b>" + data.total + "</b> скинов в каталоге";
 
     if (!data.items.length) {
       empty_(list, "🔍", "Ничего не нашлось. Сбросьте фильтры или измените запрос.");
@@ -1237,13 +1323,51 @@
     loadCatalogItems(0).catch(fail);
   });
 
-  $("catalog-reset").addEventListener("click", () => {
-    state.catalog = { category: null, weapon: null, query: "", page: 0, pages: 1 };
+  function resetCatalogFilters() {
+    state.catalog = {
+      category: null, weapon: null, query: "", page: 0, pages: 1,
+      wear: null, min: "", max: "", sort: "price_asc", stattrak: false
+    };
     state.catalogPages.clear();
     $("catalog-search").value = "";
+    $("catalog-min").value = "";
+    $("catalog-max").value = "";
     renderCatalogChips();
+    renderWearChips();
+  }
+
+  $("catalog-reset").addEventListener("click", () => {
+    resetCatalogFilters();
     loadCatalogItems(0).catch(fail);
   });
+
+  $("catalog-wear").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-wear]");
+    if (!button) return;
+    state.catalog.wear = button.getAttribute("data-wear") || null;
+    renderWearChips();
+    loadCatalogItems(0).catch(fail);
+  });
+
+  $("catalog-stattrak").addEventListener("click", () => {
+    state.catalog.stattrak = !state.catalog.stattrak;
+    renderWearChips();
+    loadCatalogItems(0).catch(fail);
+  });
+
+  $("catalog-sort").addEventListener("change", () => {
+    state.catalog.sort = $("catalog-sort").value;
+    loadCatalogItems(0).catch(fail);
+  });
+
+  function applyPriceFilter() {
+    state.catalog.min = $("catalog-min").value.trim();
+    state.catalog.max = $("catalog-max").value.trim();
+    loadCatalogItems(0).catch(fail);
+  }
+
+  $("catalog-min").addEventListener("change", applyPriceFilter);
+  $("catalog-max").addEventListener("change", applyPriceFilter);
 
   $("catalog-prev").addEventListener("click", () => loadCatalogItems(state.catalog.page - 1).catch(fail));
   $("catalog-next").addEventListener("click", () => loadCatalogItems(state.catalog.page + 1).catch(fail));
@@ -1366,13 +1490,18 @@
     const list = $("board-list");
     skeletonRows(list, 3);
 
-    const data = await api("/api/offers?page=" + page);
+    const suffix = state.boardQuery ? "&q=" + encodeURIComponent(state.boardQuery) : "";
+    const data = await api("/api/offers?page=" + page + suffix);
     state.boardPage = data.page;
     state.boardPages = data.pages;
-    $("board-stat").innerHTML = "<b>" + data.total + "</b> активных объявлений";
+    $("board-stat").innerHTML = state.boardQuery
+      ? "Найдено <b>" + data.total + "</b> по запросу «" + esc(state.boardQuery) + "»"
+      : "<b>" + data.total + "</b> активных объявлений";
 
     if (!data.items.length) {
-      empty_(list, "📋", "Доска пуста. Создайте объявление во вкладке «Создать».");
+      empty_(list, "📋", state.boardQuery
+        ? "Ничего не нашлось. Попробуйте другое слово или уберите запрос."
+        : "Доска пуста. Создайте объявление во вкладке «Создать».");
     } else {
       list.innerHTML = data.items.map((offer) => offerCard(offer, { acceptable: true })).join("");
     }
@@ -1382,6 +1511,23 @@
     $("board-prev").disabled = data.page === 0;
     $("board-next").disabled = data.page + 1 >= data.pages;
   }
+
+  function runBoardSearch() {
+    state.boardQuery = $("board-search").value.trim();
+    renderBoardQueryChip();
+    loadBoard(0).catch(fail);
+  }
+
+  function renderBoardQueryChip() {
+    const stat = $("board-stat");
+    if (!stat) return;
+    stat.title = state.boardQuery || "";
+  }
+
+  $("board-find").addEventListener("click", runBoardSearch);
+  $("board-search").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") runBoardSearch();
+  });
 
   $("board-prev").addEventListener("click", () => loadBoard(state.boardPage - 1).catch(fail));
   $("board-next").addEventListener("click", () => loadBoard(state.boardPage + 1).catch(fail));

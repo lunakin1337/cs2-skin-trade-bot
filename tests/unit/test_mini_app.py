@@ -53,3 +53,12 @@ def test_mobile_layout_rules_present():
     assert "@media (max-width: 480px)" in html
     assert "repeat(2, minmax(0, 1fr))" in html
     assert "env(safe-area-inset-bottom" in html
+
+
+def test_catalog_filters_present():
+    html = _html()
+
+    for element in ['id="catalog-wear"', 'id="catalog-min"', 'id="catalog-max"', 'id="catalog-sort"', 'id="catalog-stattrak"']:
+        assert element in html
+    assert 'params.set("wear"' in html
+    assert 'params.set("st", "1")' in html
