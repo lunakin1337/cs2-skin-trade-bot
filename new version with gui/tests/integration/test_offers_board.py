@@ -75,7 +75,9 @@ class TestOfferCard:
         )
 
         assert "скины на $50" in card
-        assert "—" in card
+        # автор без username/имени больше не раскрывает telegram id
+        assert "id " not in card
+        assert "Пользователь" in card
 
 
 class TestBoard:

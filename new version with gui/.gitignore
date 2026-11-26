@@ -46,3 +46,7 @@ build/
 # Бэкапы базы
 data/*.bak
 backups/
+
+# FSM-хранилище
+src/data/fsm.db
+src/data/fsm.db-*

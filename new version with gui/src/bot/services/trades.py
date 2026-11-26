@@ -69,10 +69,18 @@ async def settle_after_receipt(repos: Repositories, trade: dict) -> dict:
     if not (trade.get("buyer_completed_at") and trade.get("seller_completed_at")):
         return trade
 
-    await repos.trades.set_holding(trade["id"], PROTECTION_DAYS)
-    # обмен состоялся: объявление больше не висит на доске, даже пока идёт Trade Protection
-    if trade.get("offer_id"):
-        await repos.offers.update_status(trade["offer_id"], "completed")
+    # все три записи — одна транзакция: либо сделка уходит в holding и
+    # объявление закрыто, либо ничего не меняется
+    await repos.db.begin()
+    try:
+        await repos.trades.set_holding(trade["id"], PROTECTION_DAYS)
+        # обмен состоялся: объявление больше не висит на доске, даже пока идёт Trade Protection
+        if trade.get("offer_id"):
+            await repos.offers.update_status(trade["offer_id"], "completed")
+        await repos.db.commit_transaction()
+    except Exception:
+        await repos.db.rollback()
+        raise
     return await repos.trades.get_by_id(trade["id"]) or trade
 
 
@@ -85,9 +93,15 @@ async def revert_after_trade_cancel(repos: Repositories, trade: dict) -> dict:
     """
     if trade["status"] != "holding":
         return trade
-    reverted = await repos.trades.revert_to_escrow(trade["id"])
-    if reverted and trade.get("offer_id"):
-        await repos.offers.update_status(trade["offer_id"], "in_trade")
+    await repos.db.begin()
+    try:
+        reverted = await repos.trades.revert_to_escrow(trade["id"])
+        if reverted and trade.get("offer_id"):
+            await repos.offers.update_status(trade["offer_id"], "in_trade")
+        await repos.db.commit_transaction()
+    except Exception:
+        await repos.db.rollback()
+        raise
     return await repos.trades.get_by_id(trade["id"]) or trade
 
 
@@ -99,13 +113,21 @@ async def finalize_due(repos: Repositories, trade: dict) -> dict:
     """
     if trade["status"] != "holding":
         return trade
-    if not await repos.trades.finalize(trade["id"]):
-        return trade
 
-    for participant in (trade["buyer_id"], trade["seller_id"]):
-        await repos.users.increment_trades_count(participant)
-    if trade.get("offer_id"):
-        await repos.offers.update_status(trade["offer_id"], "completed")
+    # finalize + счётчики + статус объявления — атомарно
+    await repos.db.begin()
+    try:
+        if not await repos.trades.finalize(trade["id"]):
+            await repos.db.rollback()
+            return trade
+        for participant in (trade["buyer_id"], trade["seller_id"]):
+            await repos.users.increment_trades_count(participant)
+        if trade.get("offer_id"):
+            await repos.offers.update_status(trade["offer_id"], "completed")
+        await repos.db.commit_transaction()
+    except Exception:
+        await repos.db.rollback()
+        raise
     return await repos.trades.get_by_id(trade["id"]) or trade
 
 

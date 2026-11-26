@@ -37,8 +37,11 @@ async def seeded(tmp_path):
     real_offer = await repos.offers.create(
         creator_id=bob["id"], title="real", items_offered=[], items_wanted="x"
     )
+    real_item = await repos.items.add(
+        owner_id=alice["id"], steam_asset_id="real-1", market_hash_name="Real Skin"
+    )
     real_trade = await repos.trades.create(alice["id"], bob["id"], real_offer)
-    await repos.trade_items.add(real_trade, 1, bob["id"], alice["id"])
+    await repos.trade_items.add(real_trade, real_item, bob["id"], alice["id"])
     await repos.trades.mark_completed(real_trade)
     await repos.ratings.create(real_trade, alice["id"], bob["id"], 5)
 
@@ -47,7 +50,10 @@ async def seeded(tmp_path):
     )
     await repos.offers.update_status(bot_offer, "in_trade")
     bot_trade = await repos.trades.create(alice["id"], bot["id"], bot_offer)
-    await repos.trade_items.add(bot_trade, 2, bot["id"], alice["id"])
+    bot_item = await repos.items.add(
+        owner_id=bot["id"], steam_asset_id="bot-1", market_hash_name="Bot Knife"
+    )
+    await repos.trade_items.add(bot_trade, bot_item, bot["id"], alice["id"])
     await repos.disputes.create(bot_trade, alice["id"], "тест")
 
     stuck_offer = await repos.offers.create(

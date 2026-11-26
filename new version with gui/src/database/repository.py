@@ -16,10 +16,32 @@ class Database:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._connection: Optional[aiosqlite.Connection] = None
+        self._in_transaction = False
 
     async def connect(self) -> None:
         self._connection = await aiosqlite.connect(self.db_path)
         self._connection.row_factory = aiosqlite.Row
+        # WAL: читатели не блокируют писателя; busy_timeout и
+        # foreign_keys — обязательные прагмы для многопотчного бота с веб-API.
+        await self._connection.execute("PRAGMA journal_mode=WAL")
+        await self._connection.execute("PRAGMA busy_timeout=5000")
+        await self._connection.execute("PRAGMA foreign_keys=ON")
+
+    async def begin(self) -> None:
+        """Открыть явную транзакцию (для многошаговых операций со сделками).
+
+        Пока транзакция открыта, одиночные commit() методов репозиториев
+        становятся no-op: коммитит только внешняя операция.
+        """
+        if not self._connection:
+            raise RuntimeError("Database not connected")
+        await self._connection.execute("BEGIN IMMEDIATE")
+        self._in_transaction = True
+
+    async def rollback(self) -> None:
+        self._in_transaction = False
+        if self._connection:
+            await self._connection.rollback()
 
     async def close(self) -> None:
         if self._connection:
@@ -32,6 +54,14 @@ class Database:
         return await self._connection.execute(query, params)
 
     async def commit(self) -> None:
+        if self._in_transaction:
+            return  # коммитит только внешняя транзакция
+        if self._connection:
+            await self._connection.commit()
+
+    async def commit_transaction(self) -> None:
+        """Завершить явную транзакцию, открытую begin()."""
+        self._in_transaction = False
         if self._connection:
             await self._connection.commit()
 
@@ -650,6 +680,26 @@ class OfferRepository:
         )
         await self.db.commit()
 
+    async def set_expiry(self, offer_id: int, expires_at: str | None) -> None:
+        await self.db.execute(
+            "UPDATE offers SET expires_at = ?, updated_at = datetime('now') WHERE id = ?",
+            (expires_at, offer_id),
+        )
+        await self.db.commit()
+
+    async def list_expired_active(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Активные объявления со истёкшим сроком — кандидаты на автоснятие."""
+        cur = await self.db.execute(
+            """
+            SELECT id, creator_id, title FROM offers
+            WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= datetime('now')
+            ORDER BY expires_at LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cur.fetchall()
+        return [dict(row) for row in rows]
+
 
 TRADE_SELECT = """
     SELECT t.*,
@@ -694,6 +744,15 @@ class TradeRepository:
         cur = await self.db.execute(
             f"{TRADE_SELECT} WHERE t.buyer_id = ? OR t.seller_id = ? "
             "ORDER BY t.created_at DESC LIMIT ?",
+            (user_id, user_id, limit),
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_completed_for_user(self, user_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+        cur = await self.db.execute(
+            f"{TRADE_SELECT} WHERE (t.buyer_id = ? OR t.seller_id = ?) AND t.status = 'completed' "
+            "ORDER BY t.completed_at DESC LIMIT ?",
             (user_id, user_id, limit),
         )
         rows = await cur.fetchall()
@@ -788,6 +847,47 @@ class TradeRepository:
         )
         await self.db.commit()
         return cur.rowcount == 1
+
+    async def list_holding_due(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Сделки в holding, у которых истёк срок Trade Protection."""
+        cur = await self.db.execute(
+            """
+            SELECT * FROM trades
+            WHERE status = 'holding'
+              AND finalize_at IS NOT NULL AND finalize_at <= datetime('now')
+            ORDER BY finalize_at
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cur.fetchall()
+        return [dict(row) for row in rows]
+
+    async def list_holding_remindable(self, within_hours: int = 24, limit: int = 50) -> List[Dict[str, Any]]:
+        """Сделки в holding, у которых Trade Protection истекает в ближайшие N часов,
+        и напоминание ещё не отправляли."""
+        cur = await self.db.execute(
+            """
+            SELECT * FROM trades
+            WHERE status = 'holding'
+              AND finalize_at IS NOT NULL
+              AND finalize_at > datetime('now')
+              AND finalize_at <= datetime('now', '+' || ? || ' hours')
+              AND reminder_sent_at IS NULL
+            ORDER BY finalize_at
+            LIMIT ?
+            """,
+            (within_hours, limit),
+        )
+        rows = await cur.fetchall()
+        return [dict(row) for row in rows]
+
+    async def mark_holding_reminded(self, trade_id: int) -> None:
+        await self.db.execute(
+            "UPDATE trades SET reminder_sent_at = datetime('now') WHERE id = ?",
+            (trade_id,),
+        )
+        await self.db.commit()
 
     async def update_status(self, trade_id: int, status: str) -> None:
         await self.db.execute(
@@ -1313,6 +1413,84 @@ class SkinRepository:
         return row["cnt"] if row else 0
 
 
+class WantedRepository:
+    """Хотелки «Ищут»: пользователь ищет скин, не выставляя свои."""
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    async def create(self, user_id: int, skin_name: str) -> Dict[str, Any]:
+        cur = await self.db.execute(
+            "INSERT INTO wanted (user_id, skin_name) VALUES (?, ?) RETURNING *",
+            (user_id, skin_name),
+        )
+        row = await cur.fetchone()
+        await self.db.commit()
+        return dict(row)
+
+    async def delete(self, id: int, user_id: int) -> bool:
+        cur = await self.db.execute(
+            "DELETE FROM wanted WHERE id = ? AND user_id = ? RETURNING id",
+            (id, user_id),
+        )
+        row = await cur.fetchone()
+        await self.db.commit()
+        return bool(row)
+
+    async def list_for_user(self, user_id: int) -> List[Dict[str, Any]]:
+        cur = await self.db.execute(
+            "SELECT * FROM wanted WHERE user_id = ? AND status = 'active' ORDER BY created_at DESC",
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+        return [dict(row) for row in rows]
+
+    async def find_matchers_for_skin(self, market_hash_name: str) -> List[Dict[str, Any]]:
+        """Активные хотелки, точно совпадающие со скином (регистронезависимо)."""
+        cur = await self.db.execute(
+            "SELECT * FROM wanted WHERE status = 'active' AND lower(skin_name) = lower(?)",
+            (market_hash_name,),
+        )
+        rows = await cur.fetchall()
+        return [dict(row) for row in rows]
+
+    async def mark_notified(self, wanted_id: int) -> None:
+        """Хотелка совпала — переводим в статус matched (пользователь уведомлён)."""
+        await self.db.execute(
+            "UPDATE wanted SET status = 'matched' WHERE id = ?",
+            (wanted_id,),
+        )
+        await self.db.commit()
+
+
+class TradeMessageRepository:
+    """Чат сделки: сообщения видят только покупатель и продавец."""
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    async def add(self, trade_id: int, sender_id: int, body: str) -> Dict[str, Any]:
+        cur = await self.db.execute(
+            "INSERT INTO trade_messages (trade_id, sender_id, body) VALUES (?, ?, ?) RETURNING *",
+            (trade_id, sender_id, body),
+        )
+        row = await cur.fetchone()
+        await self.db.commit()
+        return dict(row)
+
+    async def list_for_trade(self, trade_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        cur = await self.db.execute(
+            """
+            SELECT m.*, u.username as sender_username, u.first_name as sender_first_name
+            FROM trade_messages m JOIN users u ON u.id = m.sender_id
+            WHERE m.trade_id = ? ORDER BY m.created_at DESC LIMIT ?
+            """,
+            (trade_id, limit),
+        )
+        rows = await cur.fetchall()
+        return [dict(row) for row in reversed(rows)]
+
+
 class Repositories:
     """Контейнер всех репозиториев."""
 
@@ -1327,3 +1505,5 @@ class Repositories:
         self.disputes = DisputeRepository(db)
         self.settings = SettingsRepository(db)
         self.skins = SkinRepository(db)
+        self.wanted = WantedRepository(db)
+        self.trade_messages = TradeMessageRepository(db)

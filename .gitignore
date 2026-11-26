@@ -46,3 +46,12 @@ build/
 # Бэкапы базы
 data/*.bak
 backups/
+# Secrets and archives
+.env.*
+*.env
+*.zip
+*.bak
+bot.log
+cloudflare.log
+tunnel_ssh.log
+*.db.bak

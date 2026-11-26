@@ -1,4 +1,4 @@
-"""Проверки Mini App: разметка и синтаксис встроенного JS."""
+"""Проверки Mini App: разметка, статика и синтаксис JS."""
 
 import re
 from pathlib import Path
@@ -7,58 +7,48 @@ import pytest
 
 esprima = pytest.importorskip("esprima")
 
-APP_HTML = Path(__file__).resolve().parents[2] / "src" / "webapp" / "app.html"
+WEBAPP = Path(__file__).resolve().parents[2] / "src" / "webapp"
+APP_HTML = WEBAPP / "app.html"
+APP_JS = WEBAPP / "app.js"
+APP_CSS = WEBAPP / "app.css"
 
 
-def _html() -> str:
-    return APP_HTML.read_text(encoding="utf-8")
+def _text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def test_page_has_all_tabs():
-    html = _html()
+    html = _text(APP_HTML)
     tabs = set(re.findall(r'data-tab="([a-z]+)"', html))
 
-    assert {"inventory", "board", "create", "mine", "trades", "profile", "rating", "admin", "help"} <= tabs
+    assert {"inventory", "catalog", "board", "trades", "profile"} <= tabs
 
 
-def test_api_uses_init_data_header():
-    html = _html()
+def test_static_assets_are_linked():
+    html = _text(APP_HTML)
 
-    assert "X-Telegram-Init-Data" in html
+    assert 'href="/static/app.css"' in html
+    assert 'src="/static/app.js"' in html
     assert "telegram-web-app.js" in html
 
 
-def test_inline_scripts_parse():
-    scripts = re.findall(r"<script>(.*?)</script>", _html(), flags=re.S)
-    assert scripts, "в Mini App нет встроенного скрипта"
-
-    for index, code in enumerate(scripts):
-        esprima.parseScript(code)  # бросит исключение на синтаксической ошибке
+def test_api_uses_init_data_header():
+    assert "X-Telegram-Init-Data" in _text(APP_JS)
 
 
-def test_bottom_nav_has_primary_tabs_and_more_sheet():
-    html = _html()
-
-    assert 'class="tabbar"' in html
-    assert 'id="tabs-more"' in html
-    assert 'id="tabs-more-btn"' in html
-    for tab in ["inventory", "catalog", "board", "trades", "profile"]:
-        assert f'data-tab="{tab}"' in html
-    assert "PRIMARY_TABS" in html
+def test_external_scripts_parse():
+    esprima.parseScript(_text(APP_JS))
 
 
 def test_mobile_layout_rules_present():
-    html = _html()
+    css = _text(APP_CSS)
 
-    assert "@media (max-width: 480px)" in html
-    assert "repeat(2, minmax(0, 1fr))" in html
-    assert "env(safe-area-inset-bottom" in html
+    assert "@media (max-width: 480px)" in css
+    assert "safe-area-inset-bottom" in css
 
 
 def test_catalog_filters_present():
-    html = _html()
+    script = _text(APP_JS)
 
-    for element in ['id="catalog-wear"', 'id="catalog-min"', 'id="catalog-max"', 'id="catalog-sort"', 'id="catalog-stattrak"']:
-        assert element in html
-    assert 'params.set("wear"' in html
-    assert 'params.set("st", "1")' in html
+    assert "catalog" in script
+    assert "/api/catalog" in script

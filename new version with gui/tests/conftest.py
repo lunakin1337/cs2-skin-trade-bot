@@ -81,3 +81,13 @@ async def state():
     context = FSMContext(storage=storage, key=(123456789, 123456789))
     yield context
     await storage.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_api_rate_limits():
+    """Изолировать in-memory троттлинг API между тестами."""
+    import web_app as web_app_module
+
+    web_app_module._api_hit_timestamps.clear()
+    yield
+    web_app_module._api_hit_timestamps.clear()

@@ -73,8 +73,12 @@ class TestAuth:
         text = await response.text()
 
         assert response.status == 200
-        assert "Telegram.WebApp" in text
-        assert "/api/inventory" in text
+        # логика вынесена в /static/app.js — страница подключает её
+        assert "/static/app.js" in text
+        assert "/static/app.css" in text
+        script = await (await client.get("/static/app.js")).text()
+        assert "Telegram.WebApp" in script
+        assert "/api/inventory" in script
 
 
 class TestInventoryApi:
@@ -359,10 +363,11 @@ class TestTradesApi:
         buyer_after = await repos.users.get_by_telegram_id(TELEGRAM_ID)
         assert buyer_after["trades_count"] == 0
 
+        # мгновенный повтор после успешного rollback попадает в троттлинг
         again = await client.post(
             f"/api/trades/{trade_id}/rollback", headers=auth_headers()
         )
-        assert again.status == 400
+        assert again.status == 429
 
 
 class TestAdminApi:
@@ -645,3 +650,137 @@ class TestCounterOffers:
             json={"item_ids": [seller_item]},
         )
         assert response.status == 400
+
+
+class TestPublicProfile:
+    async def test_public_profile_requires_auth(self, client):
+        response = await client.get("/api/users/555000111")
+        assert response.status == 401
+
+    async def test_public_profile_hides_private_fields(self, client):
+        await client.get("/api/me", headers=auth_headers())
+
+        response = await client.get(f"/api/users/{TELEGRAM_ID}", headers=auth_headers())
+        assert response.status == 200
+
+        data = await response.json()
+        assert data["telegram_id"] == TELEGRAM_ID
+        assert data["username"] == "masha"
+        assert "trade_url" not in data
+        assert "steam" not in data
+        assert "inventory" not in data
+        assert "items" in data and "recent_trades" in data
+
+    async def test_public_profile_unknown_user(self, client):
+        response = await client.get("/api/users/424242", headers=auth_headers())
+        assert response.status == 404
+
+
+class TestWanted:
+    async def test_wanted_crud(self, client):
+        headers = auth_headers()
+
+        created = await client.post(
+            "/api/wanted", headers=headers, json={"skin_name": "AK-47 Redline"}
+        )
+        assert created.status == 200
+        item = (await created.json())["item"]
+        assert item["skin_name"] == "AK-47 Redline"
+        assert item["status"] == "active"
+
+        listed = await (await client.get("/api/wanted", headers=headers)).json()
+        assert [w["id"] for w in listed["items"]] == [item["id"]]
+
+        # повтор в пределах троттлинга (2 c) отклоняется лимитом, а не поиском дублей
+        duplicate = await client.post(
+            "/api/wanted", headers=headers, json={"skin_name": "ak-47 redline"}
+        )
+        assert duplicate.status == 429
+
+        deleted = await client.delete(f"/api/wanted/{item['id']}", headers=headers)
+        assert deleted.status == 200
+
+        import time as _t
+
+        _t.sleep(2.1)
+
+        gone = await client.delete("/api/wanted/999999", headers=headers)
+        assert gone.status == 404
+
+    async def test_wanted_requires_auth(self, client):
+        assert (await client.get("/api/wanted")).status == 401
+        assert (await client.post("/api/wanted", json={"skin_name": "x"})).status == 401
+
+
+class TestTradeChat:
+    async def _prepare_trade(self, client):
+        """Два пользователя, оффер и принятая сделка — возвращаем trade_id."""
+        repos = client.app[REPOS_KEY]
+        seller = await repos.users.create_or_update(telegram_id=999000111, username="seller")
+        buyer = await repos.users.create_or_update(telegram_id=TELEGRAM_ID, username="masha")
+        for participant in (seller, buyer):
+            await repos.users.link_steam(
+                participant["id"],
+                "76561198000000000",
+                "https://steamcommunity.com/tradeoffer/new/?partner=9&token=tOKen9",
+                trade_partner="9",
+                trade_token="tOKen9",
+            )
+
+        seller_item = await repos.items.add(
+            owner_id=seller["id"], steam_asset_id="asset-s", market_hash_name="AK-47 Redline",
+            price_steam=100.0,
+        )
+        buyer_item = await repos.items.add(
+            owner_id=buyer["id"], steam_asset_id="asset-b", market_hash_name="AWP | Asiimov",
+            price_steam=110.0,
+        )
+        seller_offer_id = seller_item  # items.add возвращает id предмета
+        offer_id = await repos.offers.create(
+            creator_id=seller["id"], title="Обмен", items_offered=[seller_offer_id], items_wanted="AWP"
+        )
+        accepted = await client.post(
+            f"/api/offers/{offer_id}/accept",
+            headers=auth_headers(TELEGRAM_ID),
+            json={"item_ids": [buyer_item]},
+        )
+        assert accepted.status == 200, await accepted.text()
+        return (await accepted.json())["trade_id"], buyer["id"]
+
+    async def test_chat_only_for_participants(self, client):
+        trade_id, _ = await self._prepare_trade(client)
+
+        outsider = await client.get(f"/api/trades/{trade_id}/messages", headers=auth_headers(555111222))
+        assert outsider.status == 403
+
+        response = await client.get(f"/api/trades/{trade_id}/messages", headers=auth_headers())
+        assert response.status == 200
+        assert (await response.json())["items"] == []
+
+    async def test_chat_send_and_read(self, client):
+        trade_id, buyer = await self._prepare_trade(client)
+
+        sent = await client.post(
+            f"/api/trades/{trade_id}/messages",
+            headers=auth_headers(TELEGRAM_ID),
+            json={"body": "Привет! Обмен сегодня?"},
+        )
+        assert sent.status == 200
+
+        messages = await (await client.get(f"/api/trades/{trade_id}/messages", headers=auth_headers())).json()
+        assert [m["body"] for m in messages["items"]] == ["Привет! Обмен сегодня?"]
+
+    async def test_chat_rejects_empty_and_foreign(self, client):
+        trade_id, _ = await self._prepare_trade(client)
+
+        empty = await client.post(
+            f"/api/trades/{trade_id}/messages", headers=auth_headers(), json={"body": "  "}
+        )
+        assert empty.status == 400
+
+        foreign = await client.post(
+            f"/api/trades/{trade_id}/messages",
+            headers=auth_headers(555111222),
+            json={"body": "spam"},
+        )
+        assert foreign.status == 403

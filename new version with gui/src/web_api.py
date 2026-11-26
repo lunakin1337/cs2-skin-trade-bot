@@ -58,13 +58,9 @@ def _rate_limited(user_id: int) -> bool:
 
 
 def _init_data(request: web.Request) -> str:
-    header = request.headers.get("X-Telegram-Init-Data")
-    if header:
-        return header
-    raw_qs = request.rel_url.query_string
-    if "initData=" in raw_qs:
-        return raw_qs.split("initData=", 1)[1]
-    return request.query.get("initData") or ""
+    # initData — действующий токен авторизации: принимаем только из заголовка.
+    # В query он попадает в access-логи (прокси, контейнеры) и утекает сессию.
+    return request.headers.get("X-Telegram-Init-Data") or ""
 
 
 def _config(request: web.Request) -> BotConfig:
@@ -706,7 +702,100 @@ async def api_offers_create(request: web.Request) -> web.Response:
             {"error": "Один из скинов уже выставлен в другом объявлении — снимите его: /my_offers"},
             status=409,
         )
+
+    # «Ищут»: кому-то нужен скин из нового объявления — уведомляем автора хотелки
+    await _notify_wanted_matches(request, items, offer_id)
+
+    # срок жизни объявления из тела запроса (дней); по умолчанию — 14
+    days = body.get("days", 14)
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return web.json_response({"error": "days — целое число дней (7, 14 или 30)"}, status=400)
+    if days not in (7, 14, 30):
+        return web.json_response({"error": "Срок — 7, 14 или 30 дней"}, status=400)
+    from datetime import datetime, timedelta, timezone
+
+    expires = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    await _repos(request).offers.set_expiry(offer_id, expires)
+
     return web.json_response({"ok": True, "id": offer_id, "wanted": wanted_name, "price_warning": price_warning})
+
+
+async def _notify_wanted_matches(request: web.Request, items: list, offer_id: int) -> None:
+    """Для каждого выставленного скина находим активные хотелки и пишем их авторам."""
+    repos = _repos(request)
+    bot: Bot | None = request.app.get(BOT_KEY)
+    notified: set[int] = set()
+    for item in items:
+        name = item.get("market_hash_name")
+        if not name:
+            continue
+        for want in await repos.wanted.find_matchers_for_skin(name):
+            if want["user_id"] in notified:
+                continue
+            owner = await repos.users.get_by_id(want["user_id"])
+            if not owner:
+                continue
+            notified.add(want["user_id"])
+            if bot:
+                try:
+                    await bot.send_message(
+                        owner["telegram_id"],
+                        f"На доске появился скин из вашего «Ищут»: {name}. Объявление #{offer_id}.",
+                    )
+                except Exception:
+                    pass  # уведомление не критично для создания объявления
+            await repos.wanted.mark_notified(want["id"])
+
+
+async def api_wanted_list(request: web.Request) -> web.Response:
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+    repos = _repos(request)
+    wanted = await repos.wanted.list_for_user(user["id"])
+    return web.json_response({"items": wanted})
+
+
+async def api_wanted_create(request: web.Request) -> web.Response:
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    body = await _body(request)
+    skin_name = str(body.get("skin_name") or "").strip()
+    if not skin_name or len(skin_name) < 2:
+        return web.json_response({"error": "Укажите название скина"}, status=400)
+
+    repos = _repos(request)
+
+    # нормализуем по каталогу, если скин там есть
+    candidates = await find_candidates(repos, skin_name)
+    normalized = candidates[0]["market_hash_name"] if candidates else skin_name
+
+    mine = await repos.wanted.list_for_user(user["id"])
+    if any(w["skin_name"].lower() == normalized.lower() for w in mine):
+        return web.json_response({"error": "Такая хотелка уже есть"}, status=409)
+    if len(mine) >= 10:
+        return web.json_response({"error": "Максимум 10 активных хотелок"}, status=429)
+
+    created = await repos.wanted.create(user["id"], normalized)
+    return web.json_response({"ok": True, "item": created})
+
+
+async def api_wanted_delete(request: web.Request) -> web.Response:
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+    try:
+        wanted_id = int(request.match_info["wanted_id"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad wanted id"}, status=400)
+    deleted = await _repos(request).wanted.delete(wanted_id, user["id"])
+    if not deleted:
+        return web.json_response({"error": "Хотелка не найдена"}, status=404)
+    return web.json_response({"ok": True})
 
 
 async def api_my_offers(request: web.Request) -> web.Response:
@@ -787,6 +876,17 @@ async def _offer_action(request: web.Request, action: str) -> web.Response:
         trade_id = await repos.trades.create(
             buyer_id=user["id"], seller_id=offer["creator_id"], offer_id=offer_id
         )
+        # дельта цен Steam: предупреждаем, если обмен заметно неравный (порог 15%)
+        price_warning = None
+        creator_sum = sum((it.get("price_steam") or 0) for it in creator_items)
+        mine_sum = sum((it.get("price_steam") or 0) for it in mine) if my_item_ids else 0
+        base = max(creator_sum, mine_sum)
+        if base > 0 and abs(creator_sum - mine_sum) / base > 0.15:
+            diff_pct = round(abs(creator_sum - mine_sum) / base * 100)
+            price_warning = (
+                "Разница цен сторон ~%d%% (ваш вклад ~%.0f ₽ против ~%.0f ₽). "
+                "Подтвердите обмен осознанно." % (diff_pct, mine_sum, creator_sum)
+            )
         for item_id in json.loads(offer["items_offered"] or "[]"):
             await repos.trade_items.add(
                 trade_id=trade_id,
@@ -805,7 +905,7 @@ async def _offer_action(request: web.Request, action: str) -> web.Response:
         # инициатор подтверждает сделку в момент отправки предложения
         await repos.trades.set_confirmed(trade_id, "buyer")
         await repos.offers.update_status(offer_id, "in_trade")
-        return web.json_response({"ok": True, "trade_id": trade_id, "status": "pending"})
+        return web.json_response({"ok": True, "trade_id": trade_id, "status": "pending", "price_warning": price_warning})
 
     if offer["creator_id"] != user["id"]:
         return web.json_response({"error": "Это не ваше предложение"}, status=403)
@@ -1025,6 +1125,122 @@ async def api_trade_dispute(request: web.Request) -> web.Response:
 # ---------- рейтинг ----------
 
 
+async def api_trade_messages(request: web.Request) -> web.Response:
+    """Сообщения сделки — только для её участников."""
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    repos = _repos(request)
+    try:
+        trade_id = int(request.match_info["trade_id"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad trade id"}, status=400)
+
+    trade = await repos.trades.get_by_id(trade_id)
+    if not trade:
+        return web.json_response({"error": "Сделка не найдена"}, status=404)
+    if user["id"] not in (trade["buyer_id"], trade["seller_id"]):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    return web.json_response({"items": await repos.trade_messages.list_for_trade(trade_id)})
+
+
+async def api_trade_message_send(request: web.Request) -> web.Response:
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    repos = _repos(request)
+    try:
+        trade_id = int(request.match_info["trade_id"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad trade id"}, status=400)
+
+    trade = await repos.trades.get_by_id(trade_id)
+    if not trade:
+        return web.json_response({"error": "Сделка не найдена"}, status=404)
+    if user["id"] not in (trade["buyer_id"], trade["seller_id"]):
+        return web.json_response({"error": "forbidden"}, status=403)
+
+    body = await _body(request)
+    text = str(body.get("body") or "").strip()
+    if not text:
+        return web.json_response({"error": "Пустое сообщение"}, status=400)
+    if len(text) > 1000:
+        return web.json_response({"error": "Сообщение длиннее 1000 символов"}, status=400)
+
+    message = await repos.trade_messages.add(trade_id, user["id"], text)
+    return web.json_response(
+        {
+            "ok": True,
+            "item": {
+                "id": message["id"],
+                "sender_id": user["id"],
+                "body": message["body"],
+                "created_at": message["created_at"],
+                "sender_username": user.get("username"),
+                "sender_first_name": user.get("first_name"),
+            },
+        }
+    )
+
+
+async def api_user_public(request: web.Request) -> web.Response:
+    """Публичный профиль: рейтинг, отзывы, завершённые сделки.
+
+    Только то, что показываем на витрине: без trade_url, steam-полей и статистики
+    инвентаря — приватные данные не отдаём.
+    """
+    user = await _api_user(request)
+    if user is None:
+        return _unauthorized()
+
+    try:
+        telegram_id = int(request.match_info["telegram_id"])
+    except (KeyError, ValueError):
+        return web.json_response({"error": "bad user id"}, status=400)
+
+    repos = _repos(request)
+    profile = await repos.users.get_by_telegram_id(telegram_id)
+    if not profile:
+        return web.json_response({"error": "Пользователь не найден"}, status=404)
+
+    ratings = await repos.ratings.get_for_user(profile["id"])
+    average = await repos.ratings.get_average_rating(profile["id"])
+    trades = await repos.trades.get_completed_for_user(profile["id"], limit=10)
+    registered = profile.get("created_at")
+
+    return web.json_response(
+        {
+            "telegram_id": telegram_id,
+            "username": profile.get("username"),
+            "first_name": profile.get("first_name"),
+            "rating": round(average, 2),
+            "ratings_count": len(ratings),
+            "trades_count": profile.get("trades_count") or 0,
+            "registered_at": registered,
+            "items": [
+                {
+                    "score": r["score"],
+                    "author": f"@{r['from_username']}" if r.get("from_username") else "Пользователь",
+                    "comment": r.get("comment"),
+                    "created_at": r.get("created_at"),
+                }
+                for r in ratings[:20]
+            ],
+            "recent_trades": [
+                {
+                    "id": t["id"],
+                    "completed_at": t.get("completed_at"),
+                    "role": "seller" if t["seller_id"] == profile["id"] else "buyer",
+                }
+                for t in trades
+            ],
+        }
+    )
+
+
 async def api_rating(request: web.Request) -> web.Response:
     user = await _api_user(request)
     if user is None:
@@ -1203,6 +1419,12 @@ async def api_trade_cancelled(request: web.Request) -> web.Response:
 
 def register_api_routes(app: web.Application) -> None:
     app.router.add_get("/api/me", api_me)
+    app.router.add_get("/api/trades/{trade_id}/messages", api_trade_messages)
+    app.router.add_post("/api/trades/{trade_id}/messages", api_trade_message_send)
+    app.router.add_get("/api/wanted", api_wanted_list)
+    app.router.add_post("/api/wanted", api_wanted_create)
+    app.router.add_delete("/api/wanted/{wanted_id}", api_wanted_delete)
+    app.router.add_get("/api/users/{telegram_id}", api_user_public)
     app.router.add_post("/api/profile/steam", api_profile_steam)
     app.router.add_post("/api/profile/refresh", api_profile_refresh)
     app.router.add_get("/api/inventory", api_inventory)

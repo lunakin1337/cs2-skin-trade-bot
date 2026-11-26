@@ -253,14 +253,12 @@ def _pad(text: str, width: int) -> str:
 
 
 def format_author(offer: dict) -> str:
-    """Автор объявления: @username, иначе имя, иначе telegram id."""
+    """Автор объявления: @username, иначе имя. Telegram id наружу не отдаём."""
     if offer.get("username"):
         return f"@{offer['username']}"
     if offer.get("first_name"):
         return str(offer["first_name"])
-    if offer.get("telegram_id"):
-        return f"id {offer['telegram_id']}"
-    return "—"
+    return "Пользователь"
 
 
 def format_offer_card(offer: dict, offered_items: list, index: int) -> str:

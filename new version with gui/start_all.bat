@@ -2,45 +2,34 @@
 chcp 65001 >nul
 setlocal
 echo ==========================================
-echo CS2 Skin Trade: бот + Mini App + туннель
+echo CS2 Skin Trade: веб-приложение + туннель + бот
 echo ==========================================
 
 cd /d "%~dp0"
 
-set XRAY=%USERPROFILE%\.capy\work\xray\xray.exe
-set XRAY_CFG=%USERPROFILE%\.capy\work\xray\config.json
-set CLOUDFLARED=C:\Program Files (x86)\cloudflared\cloudflared.exe
-
-echo [1/6] Проверка зависимостей...
+echo [1/5] Проверка зависимостей...
 pip show aiogram aiosqlite aiohttp >nul 2>&1
 if errorlevel 1 pip install -e .
 
-echo [2/6] Прокси Xray (Bot API с этого компьютера доступен только через него)...
-if exist "%XRAY%" (
-    start "Xray" /min "%XRAY%" run -c "%XRAY_CFG%"
-    timeout /t 3 >nul
-) else (
-    echo [!] Xray не найден: %XRAY%
+echo [2/5] Прокси для Bot API...
+rem Провайдер режет api.telegram.org напрямую. Рабочий вариант — WARP в proxy-режиме.
+netstat -ano | findstr ":40000" >nul
+if errorlevel 1 (
+    echo Включаю WARP в режиме прокси...
+    "C:\Program Files\Cloudflare\Cloudflare WARP\warp-cli.exe" mode proxy
+    timeout /t 8 >nul
 )
 
-echo [3/6] Веб-приложение на http://localhost:8080 ...
+echo [3/5] Веб-приложение на http://localhost:8080 ...
 start "CS2 WebApp" cmd /c "python -m src.web_app"
-timeout /t 4 >nul
+timeout /t 5 >nul
 
-echo [4/6] Туннель cloudflared...
-if exist "%CLOUDFLARED%" (
-    start "cloudflared" cmd /c ""%CLOUDFLARED%" tunnel --url http://localhost:8080 > cloudflare.log 2>&1"
-    timeout /t 10 >nul
-    python scripts\refresh_webapp_url.py --log cloudflare.log
-) else (
-    echo [!] cloudflared не найден — Mini App будет доступен только локально
-)
+echo [4/5] Туннель и бот под присмотром супервизора...
+echo   (cloudflared у провайдера режется, поэтому SSH-туннель localhost.run)
+start "CS2 Supervisor" cmd /c "python scripts\supervise.py"
 
-echo [5/6] Перезапуск бота с новым WEB_APP_URL...
-start "CS2 Bot" cmd /c "python -m src.bot.main"
-
-echo [6/6] Готово.
-echo   Mini App: кнопка «Приложение» в меню бота
-echo   Логи:     cloudflare.log, консоли окон
+echo [5/5] Готово.
+echo   Mini App: кнопка «Приложение» в меню бота (адрес в .env, обновляется сам)
+echo   Логи:     tunnel_ssh.log, bot.log
 echo   Стоп:     закройте окна
 pause

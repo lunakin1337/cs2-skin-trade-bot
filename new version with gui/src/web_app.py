@@ -7,6 +7,7 @@ Mini App отдаётся на `/`, данные — через JSON API (`web_a
 import html
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -20,7 +21,7 @@ from bot.services.skin_query_llm import log_llm_status
 from catalog_cache import CatalogCache
 from config.settings import BotConfig, load_config, load_llm_config
 from database import Repositories, init_database
-from web_api import register_api_routes
+from web_api import _api_user, register_api_routes
 from webapp_context import (
     BOT_KEY,
     CATALOG_CACHE_KEY,
@@ -32,6 +33,27 @@ from webapp_context import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _mask_ip(value: str) -> str:
+    # персональные данные: в логах оставляем только подсеть
+    parts = value.split(".")
+    if len(parts) == 4:
+        return ".".join(parts[:3] + ["0"])
+    if ":" in value:  # IPv6 — оставляем первые две группы
+        groups = value.split(":")
+        return ":".join(groups[:2] + ["…"]) if len(groups) > 2 else value
+    return value
+
+
+class _PrivacyAccessLogger(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = re.sub(r"(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}", r"\1.0", str(record.getMessage()))
+        record.args = None
+        return True
+
+
+logging.getLogger("aiohttp.access").addFilter(_PrivacyAccessLogger())
 
 MINI_APP_PATH = Path(__file__).parent / "webapp" / "app.html"
 
@@ -91,6 +113,19 @@ async def mini_app(request: web.Request) -> web.Response:
         logger.error("Не найден файл Mini App: %s", MINI_APP_PATH)
         return web.Response(text="Mini App не собран", status=500)
     return web.FileResponse(MINI_APP_PATH)
+
+
+async def mini_app_static(request: web.Request) -> web.FileResponse:
+    """Отдаёт app.css / app.js рядом с app.html (кэш на час, ETag из FileResponse)."""
+    name = request.match_info["name"]
+    if name not in ("app.css", "app.js"):
+        raise web.HTTPNotFound
+    path = MINI_APP_PATH.with_name(name)
+    if not path.exists():
+        raise web.HTTPNotFound
+    response = web.FileResponse(path)
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    return response
 
 
 async def health_check(request: web.Request) -> web.Response:
@@ -161,9 +196,50 @@ async def on_cleanup(app: web.Application) -> None:
 # ---------- надёжность: ошибки и тайминги ----------
 
 
+@web.middleware
+async def security_headers_middleware(request: web.Request, handler):
+    response = await handler(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' https://telegram.org; connect-src 'self'",
+    )
+    return response
+
+
 def _request_id(request: web.Request) -> str:
     """Идентификатор запроса: из заголовка или случайный, чтобы связать лог и ответ."""
     return request.headers.get("X-Request-Id") or uuid.uuid4().hex[:12]
+
+
+API_RATE_LIMIT_SECONDS = 2
+_api_hit_timestamps: dict[tuple[int, str, str], float] = {}
+
+
+@web.middleware
+async def api_rate_limit_middleware(request: web.Request, handler):
+    """Мягкий троттлинг: одинаковый успешный mutating-запрос не чаще раза в 2 секунды.
+    Ошибочные (4xx/5xx) не считаются — пользователь может сразу повторить с исправлением."""
+    if request.method in ("POST", "DELETE", "PUT", "PATCH"):
+        user = await _api_user(request)
+        if user is not None:
+            import time
+
+            key = (user["id"], request.method, request.path)
+            now = time.monotonic()
+            last = _api_hit_timestamps.get(key, 0.0)
+            if now - last < API_RATE_LIMIT_SECONDS:
+                return web.json_response(
+                    {"error": "Слишком много действий подряд — сделайте паузу"}, status=429
+                )
+            response = await handler(request)
+            if response.status < 400:
+                _api_hit_timestamps[key] = now
+            return response
+    return await handler(request)
 
 
 @web.middleware
@@ -228,11 +304,14 @@ def create_app(
 
     app.router.add_get("/", mini_app)
     app.router.add_get("/app", mini_app)
+    app.router.add_get("/static/{name}", mini_app_static)
     app.router.add_get("/health", health_check)
     app.router.add_get("/stats", user_stats)
     register_api_routes(app)
     app.middlewares.append(api_error_middleware)
+    app.middlewares.append(api_rate_limit_middleware)
     app.middlewares.append(api_timing_middleware)
+    app.middlewares.append(security_headers_middleware)
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
