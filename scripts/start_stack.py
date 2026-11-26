@@ -118,16 +118,23 @@ def ensure_tunnel(cloudflared: str, restart: bool) -> str | None:
     if restart and LOG.exists():
         LOG.unlink()
     spawn([cloudflared, "tunnel", "--url", "http://localhost:8080", "--logfile", str(LOG)], LOG)
-    for _ in range(30):
-        time.sleep(1)
+    # Cloudflare иногда тратит больше минуты на precheck и выдаёт адрес позже,
+    # поэтому ждём до двух минут и терпим первые неудачные проверки /health
+    deadline = time.time() + 120
+    candidate = None
+    while time.time() < deadline:
+        time.sleep(2)
         if not LOG.exists():
             continue
         matches = URL_RE.findall(LOG.read_text(encoding="utf-8", errors="ignore"))
-        if matches:
-            url = matches[-1]
-            if http_ok(f"{url}/health"):
-                print(f"туннель: {url}")
-                return url
+        if not matches:
+            continue
+        if matches[-1] != candidate:
+            candidate = matches[-1]
+            print(f"туннель: получен адрес {candidate}, проверяю доступность")
+        if http_ok(f"{candidate}/health"):
+            print(f"туннель: {candidate}")
+            return candidate
     print("туннель: адрес не получен, смотрите cloudflare.log")
     return None
 
